@@ -1,0 +1,5 @@
+*.o
+tinyfx
+.vscode/
+.vs/
+.svn/
