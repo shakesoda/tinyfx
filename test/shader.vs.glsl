@@ -22,7 +22,7 @@ out vec4 v_color;
 
 vec4 transform(mat4 mvp, vec4 vertex) {
 #if PSX_STYLE > 0
-	vec4 v = mvp * vec4(vertex, 1.0);
+	vec4 v = mvp * vertex;
 	vec4 vv = v;
 	vv.xyz = v.xyz / v.w;
 	vv.x = floor(96.0 * vv.x) / 96.0;

@@ -20,7 +20,7 @@ void *read_file(const char *filename) {
 
 		return buf;
 	}
-	printf("Unable to open file \"%s\"", filename);
+	printf("Unable to open file \"%s\"\n", filename);
 	return NULL;
 }
 
