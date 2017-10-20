@@ -368,6 +368,12 @@ tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format) {
 		CHECK(glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rbo));
 	}
 
+	GLenum status = CHECK(glCheckFramebufferStatus(GL_FRAMEBUFFER));
+	if (status != GL_FRAMEBUFFER_COMPLETE) {
+		// TODO: return something more error-y
+		return c;
+	}
+
 	c.gl_id = fbo;
 
 	return c;
@@ -595,7 +601,8 @@ void tfx_submit(tfx_view *view, tfx_program program, bool retain) {
 		int n = sb_count(uniforms);
 		for (int i = n-1; i >= 0; i--) {
 			tfx_uniform uniform = uniforms[i];
-			if (glGetUniformLocation(program, uniform.name) >= 0) {
+			GLuint loc = CHECK(glGetUniformLocation(program, uniform.name));
+			if (loc >= 0) {
 				// only record the last update for a given uniform
 				if (!ts_lookup(found, uniform.name)) {
 					tfx_uniform found_uniform;
@@ -678,6 +685,8 @@ tfx_stats tfx_frame(tfx_view **views) {
 
 	tfx_stats stats;
 	memset(&stats, 0, sizeof(tfx_stats));
+
+	int last_count = 0;
 
 	for (tfx_view **it = views; *it != NULL; it++) {
 		tfx_view *view = *it;
@@ -774,16 +783,16 @@ tfx_stats tfx_frame(tfx_view **views) {
 			int nu = sb_count(draw.uniforms);
 			for (int j = 0; j < nu; j++) {
 				tfx_uniform uniform = draw.uniforms[j];
-				GLint loc = glGetUniformLocation(program, uniform.name);
+				GLint loc = CHECK(glGetUniformLocation(program, uniform.name));
 				switch (uniform.type) {
-					case TFX_UNIFORM_INT: glUniform1iv(loc, uniform.count, uniform.idata);
-					case TFX_UNIFORM_FLOAT: glUniform1fv(loc, uniform.count, uniform.fdata);
-					case TFX_UNIFORM_VEC2:  glUniform2fv(loc, uniform.count, uniform.fdata);
-					case TFX_UNIFORM_VEC3:  glUniform3fv(loc, uniform.count, uniform.fdata);
-					case TFX_UNIFORM_VEC4:  glUniform4fv(loc, uniform.count, uniform.fdata);
-					case TFX_UNIFORM_MAT2:  glUniformMatrix2fv(loc, uniform.count, 0, uniform.fdata);
-					case TFX_UNIFORM_MAT3:  glUniformMatrix3fv(loc, uniform.count, 0, uniform.fdata);
-					case TFX_UNIFORM_MAT4:  glUniformMatrix4fv(loc, uniform.count, 0, uniform.fdata);
+					case TFX_UNIFORM_INT:   CHECK(glUniform1iv(loc, uniform.count, uniform.idata));
+					case TFX_UNIFORM_FLOAT: CHECK(glUniform1fv(loc, uniform.count, uniform.fdata));
+					case TFX_UNIFORM_VEC2:  CHECK(glUniform2fv(loc, uniform.count, uniform.fdata));
+					case TFX_UNIFORM_VEC3:  CHECK(glUniform3fv(loc, uniform.count, uniform.fdata));
+					case TFX_UNIFORM_VEC4:  CHECK(glUniform4fv(loc, uniform.count, uniform.fdata));
+					case TFX_UNIFORM_MAT2:  CHECK(glUniformMatrix2fv(loc, uniform.count, 0, uniform.fdata));
+					case TFX_UNIFORM_MAT3:  CHECK(glUniformMatrix3fv(loc, uniform.count, 0, uniform.fdata));
+					case TFX_UNIFORM_MAT4:  CHECK(glUniformMatrix4fv(loc, uniform.count, 0, uniform.fdata));
 					default: assert(false); break;
 				}
 			}
@@ -813,17 +822,28 @@ tfx_stats tfx_frame(tfx_view **views) {
 
 			tfx_vertex_format *fmt = draw.vbo->format;
 			int nc = sb_count(fmt->components);
-			// for (int i = 0; i < (last_count - nc); i++) {
-			// 	glDisableVertexAttribArray(last_count-i);
-			// }
+			int real = 0;
 			for (int i = 0; i < nc; i++) {
 				tfx_vertex_component vc = fmt->components[i];
-				glEnableVertexAttribArray(i);
 				GLenum gl_type = GL_FLOAT;
-				// GLuint stride = 12*i;
-				// glVertexAttribPointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void *pointer);
-				glVertexAttribPointer(i, vc.size, gl_type, vc.normalized, fmt->stride, (GLvoid*)vc.offset);
+				switch (vc.type) {
+					case TFX_TYPE_SKIP: continue;
+					case TFX_TYPE_UBYTE:  gl_type = GL_UNSIGNED_BYTE; break;
+					case TFX_TYPE_BYTE:   gl_type = GL_BYTE; break;
+					case TFX_TYPE_USHORT: gl_type = GL_UNSIGNED_SHORT; break;
+					case TFX_TYPE_SHORT:  gl_type = GL_SHORT; break;
+					case TFX_TYPE_FLOAT: break;
+					default: assert(false); break;
+				}
+				CHECK(glEnableVertexAttribArray(real));
+				CHECK(glVertexAttribPointer(real, vc.size, gl_type, vc.normalized, fmt->stride, (GLvoid*)vc.offset));
+				real += 1;
 			}
+			nc = last_count - nc;
+			for (int i = 0; i < nc; i++) {
+				CHECK(glDisableVertexAttribArray(last_count-i));
+			}
+			last_count = real;
 
 			if (draw.ibo) {
 				CHECK(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, draw.ibo->gl_id));
