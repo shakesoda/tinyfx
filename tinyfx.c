@@ -785,14 +785,14 @@ tfx_stats tfx_frame(tfx_view **views) {
 				tfx_uniform uniform = draw.uniforms[j];
 				GLint loc = CHECK(glGetUniformLocation(program, uniform.name));
 				switch (uniform.type) {
-					case TFX_UNIFORM_INT:   CHECK(glUniform1iv(loc, uniform.count, uniform.idata));
-					case TFX_UNIFORM_FLOAT: CHECK(glUniform1fv(loc, uniform.count, uniform.fdata));
-					case TFX_UNIFORM_VEC2:  CHECK(glUniform2fv(loc, uniform.count, uniform.fdata));
-					case TFX_UNIFORM_VEC3:  CHECK(glUniform3fv(loc, uniform.count, uniform.fdata));
-					case TFX_UNIFORM_VEC4:  CHECK(glUniform4fv(loc, uniform.count, uniform.fdata));
-					case TFX_UNIFORM_MAT2:  CHECK(glUniformMatrix2fv(loc, uniform.count, 0, uniform.fdata));
-					case TFX_UNIFORM_MAT3:  CHECK(glUniformMatrix3fv(loc, uniform.count, 0, uniform.fdata));
-					case TFX_UNIFORM_MAT4:  CHECK(glUniformMatrix4fv(loc, uniform.count, 0, uniform.fdata));
+					case TFX_UNIFORM_INT:   CHECK(glUniform1iv(loc, uniform.count, uniform.idata)); break;
+					case TFX_UNIFORM_FLOAT: CHECK(glUniform1fv(loc, uniform.count, uniform.fdata)); break;
+					case TFX_UNIFORM_VEC2:  CHECK(glUniform2fv(loc, uniform.count, uniform.fdata)); break;
+					case TFX_UNIFORM_VEC3:  CHECK(glUniform3fv(loc, uniform.count, uniform.fdata)); break;
+					case TFX_UNIFORM_VEC4:  CHECK(glUniform4fv(loc, uniform.count, uniform.fdata)); break;
+					case TFX_UNIFORM_MAT2:  CHECK(glUniformMatrix2fv(loc, uniform.count, 0, uniform.fdata)); break;
+					case TFX_UNIFORM_MAT3:  CHECK(glUniformMatrix3fv(loc, uniform.count, 0, uniform.fdata)); break;
+					case TFX_UNIFORM_MAT4:  CHECK(glUniformMatrix4fv(loc, uniform.count, 0, uniform.fdata)); break;
 					default: assert(false); break;
 				}
 			}
