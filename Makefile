@@ -28,7 +28,7 @@ endif
 all: $(OBJECTS)
 	$(CC) $(OBJECTS) -o $(OUTPUT) -Wl,--whole-archive $(LDFLAGS) -Wl,--no-whole-archive -rdynamic
 
-%.o: %.cpp
+%.o: %.c
 	$(CC) -c $(CFLAGS) $< -o $@
 
 run: all
