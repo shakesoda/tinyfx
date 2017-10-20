@@ -42,10 +42,10 @@ void run(state_t *state) {
 
 	tfx_canvas fb = tfx_canvas_new(state->internal_width, state->internal_height, TFX_FORMAT_RGB565_D16);
 
-	// tfx_view v = tfx_view_new();
-	// tfx_view_set_canvas(&v, &fb);
-	// tfx_view_set_clear_color(&v, 0xff00ffff);
-	// tfx_view_set_clear_depth(&v, 1.0);
+	tfx_view v = tfx_view_new();
+	tfx_view_set_canvas(&v, &fb);
+	tfx_view_set_clear_color(&v, 0xff00ffff);
+	tfx_view_set_clear_depth(&v, 1.0);
 
 	tfx_view back = tfx_view_new();
 	tfx_view_set_clear_color(&back, 0x555555ff);
@@ -74,7 +74,7 @@ void run(state_t *state) {
 	free(fss);
 
 	tfx_view *views[] = {
-		// &v,
+		&v,
 		&back,
 		NULL
 	};
@@ -208,9 +208,6 @@ int main(int argc, char **argv) {
 
 	SDL_SetRelativeMouseMode(1);
 	SDL_GL_SetSwapInterval(1);
-
-	glClearColor(0.0, 0.0, 0.0, 1.0);
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 	assert(signal(SIGINT, sigh) != SIG_ERR);
 
