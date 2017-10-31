@@ -16,6 +16,11 @@
 #define assert(op) (void)(op);
 #endif
 
+#ifndef TFX_UNIFORM_BUFFER_SIZE
+// by default, allow up to 8MB of uniform updates per frame.
+#define TFX_UNIFORM_BUFFER_SIZE 1024*1024*8
+#endif
+
 // The following code is public domain, from https://github.com/nothings/stb
 //////////////////////////////////////////////////////////////////////////////
 #ifndef STB_STRETCHY_BUFFER_H_INCLUDED

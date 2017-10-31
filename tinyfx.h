@@ -1,14 +1,13 @@
 #pragma once
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <GLES2/gl2.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
-
-#ifndef TFX_UNIFORM_BUFFER_SIZE
-// by default, allow up to 8MB of uniform updates per frame.
-#define TFX_UNIFORM_BUFFER_SIZE 1024*1024*8
-#endif
 
 typedef enum tfx_buffer_usage {
 	// only occasionally changed, if never
@@ -169,6 +168,7 @@ typedef struct tfx_caps {
 } tfx_caps;
 
 // TODO
+// #define TFX_API __attribute__ ((visibility("default")))
 #define TFX_API
 
 TFX_API tfx_caps tfx_dump_caps();
@@ -211,3 +211,7 @@ TFX_API void tfx_blit(tfx_view *src, tfx_view *dst, uint16_t x, uint16_t y, uint
 TFX_API tfx_stats tfx_frame(tfx_view **views);
 
 #undef TFX_API
+
+#ifdef __cplusplus
+}
+#endif
