@@ -180,7 +180,6 @@ TFX_API tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen
 
 TFX_API tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format);
 
-// TFX_API tfx_view tfx_view_new();
 TFX_API void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas);
 TFX_API void tfx_view_set_clear_color(uint8_t id, int color);
 TFX_API void tfx_view_set_clear_depth(uint8_t id, float depth);
@@ -193,12 +192,11 @@ TFX_API void tfx_view_get_dimensions(uint8_t id, uint16_t *w, uint16_t *h);
 TFX_API tfx_program tfx_program_new(const char *vss, const char *fss, const char *attribs[]);
 
 TFX_API tfx_uniform tfx_uniform_new(const char *name, tfx_uniform_type type, int count);
-TFX_API void tfx_uniform_set_float(tfx_uniform *uniform, float *data);
-TFX_API void tfx_uniform_set_int(tfx_uniform *uniform, int *data);
 
+TFX_API void tfx_set_uniform(tfx_uniform *uniform, float *data);
 TFX_API void tfx_set_callback(tfx_draw_callback cb);
 TFX_API void tfx_set_state(uint64_t flags);
-TFX_API void tfx_set_texture(tfx_texture *tex, uint8_t slot);
+TFX_API void tfx_set_texture(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot);
 TFX_API void tfx_set_vertices(tfx_buffer *vbo, int count);
 TFX_API void tfx_set_indices(tfx_buffer *ibo, int count);
 TFX_API void tfx_submit(uint8_t id, tfx_program program, bool retain);

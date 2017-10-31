@@ -34,12 +34,6 @@ namespace tfx {
 		Uniform(std::string name, tfx_uniform_type type, int count = 1) {
 			this->uniform = tfx_uniform_new(name.c_str(), type, count);
 		}
-		inline void set_float(float *data) {
-			tfx_uniform_set_float(&this->uniform, data);
-		}
-		inline void set_int(int *data) {
-			tfx_uniform_set_int(&this->uniform, data);
-		}
 	};
 
 	struct Canvas {
@@ -83,6 +77,13 @@ namespace tfx {
 		}
 	};
 
+	struct Texture {
+		tfx_texture texture;
+		Texture(uint16_t w, uint16_t h, void *data = NULL, bool gen_mips = true, tfx_format format = TFX_FORMAT_RGBA8) {
+			this->texture = tfx_texture_new(w, h, data, gen_mips, format);
+		}
+	};
+
 	struct Program {
 		tfx_program program;
 		Program(std::string vss, std::string fss, const char *attribs[]) {
@@ -104,6 +105,16 @@ namespace tfx {
 	}
 	inline tfx_stats frame() {
 		return tfx_frame();
+	}
+	inline void set_uniform(Uniform &uniform, float data) {
+		float tmp = data;
+		tfx_set_uniform(&uniform.uniform, &tmp);
+	}
+	inline void set_uniform(Uniform &uniform, float *data) {
+		tfx_set_uniform(&uniform.uniform, data);
+	}
+	inline void set_texture(Uniform &uniform, Texture &texture, uint8_t slot) {
+		tfx_set_texture(&uniform.uniform, &texture.texture, slot);
 	}
 	inline void set_callback(tfx_draw_callback cb) {
 		tfx_set_callback(cb);

@@ -472,17 +472,9 @@ tfx_uniform tfx_uniform_new(const char *name, tfx_uniform_type type, int count) 
 	return u;
 }
 
-void tfx_uniform_set_float(tfx_uniform *uniform, float *data) {
+void tfx_set_uniform(tfx_uniform *uniform, float *data) {
 	uniform->data = ub_cursor;
 	memcpy(uniform->fdata, data, uniform->size);
-	ub_cursor += uniform->size;
-
-	sb_push(uniforms, *uniform);
-}
-
-void tfx_uniform_set_int(tfx_uniform *uniform, int *data) {
-	uniform->data = ub_cursor;
-	memcpy(uniform->idata, data, uniform->size);
 	ub_cursor += uniform->size;
 
 	sb_push(uniforms, *uniform);
@@ -581,8 +573,17 @@ void tfx_set_callback(tfx_draw_callback cb) {
 	tmp_draw.callback = cb;
 }
 
-void tfx_set_texture(tfx_texture *tex, uint8_t slot) {
+void tfx_set_texture(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot) {
 	assert(slot <= 8);
+	assert(uniform != NULL);
+	assert(uniform->count == 1);
+
+	uniform->data = ub_cursor;
+	uniform->idata[0] = slot;
+	ub_cursor += uniform->size;
+
+	sb_push(uniforms, *uniform);
+
 	tmp_draw.textures[slot] = tex;
 }
 
