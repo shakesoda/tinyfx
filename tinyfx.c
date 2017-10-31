@@ -322,7 +322,7 @@ tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tf
 	return buffer;
 }
 
-tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, tfx_format format) {
+tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, tfx_format format, uint16_t flags) {
 	tfx_texture t;
 	memset(&t, 0, sizeof(tfx_texture));
 
@@ -333,8 +333,14 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, t
 	GLuint id = 0;
 	glGenTextures(1, &id);
 	glBindTexture(GL_TEXTURE_2D, id);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+	if ((flags & TFX_TEXTURE_FILTER_NEAREST) == TFX_TEXTURE_FILTER_NEAREST) {
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST);
+	}
+	else if ((flags & TFX_TEXTURE_FILTER_NEAREST) == TFX_TEXTURE_FILTER_NEAREST || !flags) {
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+	}
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
@@ -952,5 +958,6 @@ tfx_stats tfx_frame() {
 	return stats;
 }
 #undef MAX_VIEW
+#undef CHECK
 
 #endif // TFX_IMPLEMENTATION

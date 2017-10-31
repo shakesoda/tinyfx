@@ -45,6 +45,11 @@ enum {
 	TFX_STATE_DRAW_TRI_FAN    = 1 << 9
 };
 
+enum {
+	TFX_TEXTURE_FILTER_LINEAR  = 1 << 0,
+	TFX_TEXTURE_FILTER_NEAREST = 1 << 1
+};
+
 typedef enum tfx_format {
 	// color only
 	TFX_FORMAT_RGB565 = 0,
@@ -176,7 +181,7 @@ TFX_API void tfx_vertex_format_end(tfx_vertex_format *fmt);
 
 TFX_API tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tfx_buffer_usage usage);
 
-TFX_API tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, tfx_format format);
+TFX_API tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, tfx_format format, uint16_t flags);
 
 TFX_API tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format);
 

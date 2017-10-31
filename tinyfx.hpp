@@ -79,8 +79,8 @@ namespace tfx {
 
 	struct Texture {
 		tfx_texture texture;
-		Texture(uint16_t w, uint16_t h, void *data = NULL, bool gen_mips = true, tfx_format format = TFX_FORMAT_RGBA8) {
-			this->texture = tfx_texture_new(w, h, data, gen_mips, format);
+		Texture(uint16_t w, uint16_t h, void *data = NULL, bool gen_mips = true, tfx_format format = TFX_FORMAT_RGBA8, uint16_t flags = TFX_TEXTURE_FILTER_LINEAR) {
+			this->texture = tfx_texture_new(w, h, data, gen_mips, format, flags);
 		}
 	};
 
