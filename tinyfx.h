@@ -83,6 +83,13 @@ typedef struct tfx_uniform {
 	size_t size;
 } tfx_uniform;
 
+typedef struct tfx_texture {
+	uint16_t width;
+	uint16_t height;
+	tfx_format format;
+	GLuint gl_id;
+} tfx_texture;
+
 typedef struct tfx_canvas {
 	GLuint gl_id;
 	uint16_t width;
@@ -125,6 +132,7 @@ typedef struct tfx_draw {
 	tfx_program program;
 	tfx_uniform *uniforms;
 
+	tfx_texture *textures[8];
 	tfx_buffer *vbo;
 	tfx_buffer *ibo;
 
@@ -168,6 +176,8 @@ TFX_API void tfx_vertex_format_end(tfx_vertex_format *fmt);
 
 TFX_API tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tfx_buffer_usage usage);
 
+TFX_API tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, tfx_format format);
+
 TFX_API tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format);
 
 // TFX_API tfx_view tfx_view_new();
@@ -188,6 +198,7 @@ TFX_API void tfx_uniform_set_int(tfx_uniform *uniform, int *data);
 
 TFX_API void tfx_set_callback(tfx_draw_callback cb);
 TFX_API void tfx_set_state(uint64_t flags);
+TFX_API void tfx_set_texture(tfx_texture *tex, uint8_t slot);
 TFX_API void tfx_set_vertices(tfx_buffer *vbo, int count);
 TFX_API void tfx_set_indices(tfx_buffer *ibo, int count);
 TFX_API void tfx_submit(uint8_t id, tfx_program program, bool retain);

@@ -322,6 +322,49 @@ tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tf
 	return buffer;
 }
 
+tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, tfx_format format) {
+	tfx_texture t;
+	memset(&t, 0, sizeof(tfx_texture));
+
+	t.width = w;
+	t.height = h;
+	t.format = format;
+
+	GLuint id = 0;
+	glGenTextures(1, &id);
+	glBindTexture(GL_TEXTURE_2D, id);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+	GLenum gl_fmt = 0;
+	GLenum gl_type = 0;
+	switch (format) {
+		case TFX_FORMAT_RGB565:
+			gl_fmt = GL_RGB;
+			gl_type = GL_UNSIGNED_SHORT_5_6_5;
+			break;
+		case TFX_FORMAT_RGBA8:
+			gl_fmt = GL_RGBA;
+			gl_type = GL_UNSIGNED_BYTE;
+			break;
+		default:
+			assert(false);
+			break;
+	}
+
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+	glTexImage2D(GL_TEXTURE_2D, 0, gl_fmt, w, h, 0, gl_fmt, gl_type, data);
+	if (gen_mips && data) {
+		glGenerateMipmap(GL_TEXTURE_2D);
+	}
+
+	t.gl_id = id;
+
+	return t;
+}
+
 tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format) {
 	tfx_canvas c;
 	memset(&c, 0, sizeof(tfx_canvas));
@@ -536,6 +579,11 @@ static void reset() {
 
 void tfx_set_callback(tfx_draw_callback cb) {
 	tmp_draw.callback = cb;
+}
+
+void tfx_set_texture(tfx_texture *tex, uint8_t slot) {
+	assert(slot <= 8);
+	tmp_draw.textures[slot] = tex;
 }
 
 void tfx_set_state(uint64_t flags) {
@@ -807,8 +855,8 @@ tfx_stats tfx_frame() {
 				tfx_uniform uniform = draw.uniforms[j];
 				GLint loc = CHECK(glGetUniformLocation(program, uniform.name));
 				switch (uniform.type) {
-					case TFX_UNIFORM_INT:   CHECK(glUniform1iv(loc, uniform.count, uniform.idata)); break;
-					case TFX_UNIFORM_FLOAT: CHECK(glUniform1fv(loc, uniform.count, uniform.fdata)); break;
+					case TFX_UNIFORM_INT:   CHECK(glUniform1i(loc, *uniform.idata)); break;
+					case TFX_UNIFORM_FLOAT: CHECK(glUniform1f(loc, *uniform.fdata)); break;
 					case TFX_UNIFORM_VEC2:  CHECK(glUniform2fv(loc, uniform.count, uniform.fdata)); break;
 					case TFX_UNIFORM_VEC3:  CHECK(glUniform3fv(loc, uniform.count, uniform.fdata)); break;
 					case TFX_UNIFORM_VEC4:  CHECK(glUniform4fv(loc, uniform.count, uniform.fdata)); break;
@@ -862,10 +910,20 @@ tfx_stats tfx_frame() {
 				real += 1;
 			}
 			nc = last_count - nc;
-			for (int i = 0; i < nc; i++) {
+			for (int i = 0; i <= nc; i++) {
 				CHECK(glDisableVertexAttribArray(last_count-i));
 			}
 			last_count = real;
+
+			for (int i = 0; i < 8; i++) {
+				CHECK(glActiveTexture(GL_TEXTURE0+i));
+				if (draw.textures[i] != NULL) {
+					CHECK(glBindTexture(GL_TEXTURE_2D, draw.textures[i]->gl_id));
+				}
+				else {
+					CHECK(glBindTexture(GL_TEXTURE_2D, 0));
+				}
+			}
 
 			if (draw.ibo) {
 				CHECK(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, draw.ibo->gl_id));
