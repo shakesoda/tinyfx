@@ -2,6 +2,7 @@
 
 #include <tinyfx.h>
 #include <string>
+#include <vector>
 
 namespace tfx {
 	struct VertexFormat {
@@ -17,10 +18,14 @@ namespace tfx {
 		}
 	};
 
+	template <typename T>
 	struct Buffer {
 		tfx_buffer buffer;
-		Buffer(void *data, size_t size, VertexFormat fmt, tfx_buffer_usage usage = TFX_USAGE_STATIC) {
-			this->buffer = tfx_buffer_new(data, size, usage, &fmt.fmt);
+		// Buffer(std::vector<T> &data, VertexFormat fmt, tfx_buffer_usage usage = TFX_USAGE_STATIC) {
+		// 	this->buffer = tfx_buffer_new(&data[0], data.size()*sizeof(T), &fmt.fmt, usage);
+		// }
+		Buffer(tfx_buffer &buf) {
+			this->buffer = buf;
 		}
 	};
 
@@ -88,6 +93,9 @@ namespace tfx {
 	inline tfx_caps dump_caps() {
 		return tfx_dump_caps();
 	}
+	inline void touch(uint8_t id) {
+		tfx_touch(id);
+	}
 	inline void reset(uint16_t width, uint16_t height) {
 		tfx_reset(width, height);
 	}
@@ -103,14 +111,16 @@ namespace tfx {
 	inline void set_state(uint64_t flags) {
 		tfx_set_state(flags);
 	}
-	inline void set_vertices(Buffer *vbo, int count) {
-		tfx_set_vertices(&vbo->buffer, count);
+	template <typename T>
+	inline void set_vertices(Buffer<T> &vbo, int count) {
+		tfx_set_vertices(&vbo.buffer, count);
 	}
-	inline void set_indices(Buffer *ibo, int count) {
-		tfx_set_indices(&ibo->buffer, count);
+	template <typename T>
+	inline void set_indices(Buffer<T> &ibo, int count) {
+		tfx_set_indices(&ibo.buffer, count);
 	}
-	inline void submit(View *view, Program *program, bool retain = false) {
-		tfx_submit(view->id, program->program, retain);
+	inline void submit(View &view, Program &program, bool retain = false) {
+		tfx_submit(view.id, program.program, retain);
 	}
 	// inline void blit(tfx_view *src, tfx_view *dst, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
 

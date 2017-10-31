@@ -166,7 +166,7 @@ TFX_API tfx_vertex_format tfx_vertex_format_start();
 TFX_API void tfx_vertex_format_add(tfx_vertex_format *fmt, size_t count, bool normalized, tfx_component_type type);
 TFX_API void tfx_vertex_format_end(tfx_vertex_format *fmt);
 
-TFX_API tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_buffer_usage usage, tfx_vertex_format *format);
+TFX_API tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tfx_buffer_usage usage);
 
 TFX_API tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format);
 

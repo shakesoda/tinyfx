@@ -297,7 +297,7 @@ void tfx_vertex_format_end(tfx_vertex_format *fmt) {
 	fmt->stride = stride;
 }
 
-tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_buffer_usage usage, tfx_vertex_format *format) {
+tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tfx_buffer_usage usage) {
 	GLenum target = format == NULL ? GL_ELEMENT_ARRAY_BUFFER : GL_ARRAY_BUFFER;
 	GLenum gl_usage = GL_STATIC_DRAW;
 	switch (usage) {
