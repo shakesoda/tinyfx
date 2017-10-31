@@ -47,7 +47,7 @@ enum {
 
 enum {
 	TFX_TEXTURE_FILTER_LINEAR  = 1 << 0,
-	TFX_TEXTURE_FILTER_NEAREST = 1 << 1
+	TFX_TEXTURE_FILTER_POINT = 1 << 1
 };
 
 typedef enum tfx_format {

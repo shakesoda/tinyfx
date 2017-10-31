@@ -333,11 +333,11 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, t
 	GLuint id = 0;
 	glGenTextures(1, &id);
 	glBindTexture(GL_TEXTURE_2D, id);
-	if ((flags & TFX_TEXTURE_FILTER_NEAREST) == TFX_TEXTURE_FILTER_NEAREST) {
+	if ((flags & TFX_TEXTURE_FILTER_POINT) == TFX_TEXTURE_FILTER_POINT) {
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST);
 	}
-	else if ((flags & TFX_TEXTURE_FILTER_NEAREST) == TFX_TEXTURE_FILTER_NEAREST || !flags) {
+	else if ((flags & TFX_TEXTURE_FILTER_LINEAR) == TFX_TEXTURE_FILTER_LINEAR || !flags) {
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
 	}
