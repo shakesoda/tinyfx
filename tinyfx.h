@@ -144,19 +144,6 @@ typedef struct tfx_blit_op {
 	tfx_rect rect;
 } tfx_blit_op;
 
-typedef struct tfx_view {
-	uint32_t flags;
-
-	tfx_canvas *canvas;
-	tfx_draw    *draws;
-	tfx_blit_op *blits;
-
-	int   clear_color;
-	float clear_depth;
-
-	tfx_rect scissor_rect;
-} tfx_view;
-
 typedef struct tfx_stats {
 	uint32_t draws;
 	uint32_t blits;
@@ -183,15 +170,15 @@ TFX_API tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_buffer_usage usag
 
 TFX_API tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format);
 
-TFX_API tfx_view tfx_view_new();
-TFX_API void tfx_view_set_canvas(tfx_view *view, tfx_canvas *canvas);
-TFX_API void tfx_view_set_clear_color(tfx_view *view, int color);
-TFX_API void tfx_view_set_clear_depth(tfx_view *view, float depth);
-TFX_API void tfx_view_set_depth_test(tfx_view *view, tfx_depth_test mode);
-TFX_API void tfx_view_set_scissor(tfx_view *view, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
-TFX_API uint16_t tfx_view_get_width(tfx_view *view);
-TFX_API uint16_t tfx_view_get_height(tfx_view *view);
-TFX_API void tfx_view_get_dimensions(tfx_view *view, uint16_t *w, uint16_t *h);
+// TFX_API tfx_view tfx_view_new();
+TFX_API void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas);
+TFX_API void tfx_view_set_clear_color(uint8_t id, int color);
+TFX_API void tfx_view_set_clear_depth(uint8_t id, float depth);
+TFX_API void tfx_view_set_depth_test(uint8_t id, tfx_depth_test mode);
+TFX_API void tfx_view_set_scissor(uint8_t id, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
+TFX_API uint16_t tfx_view_get_width(uint8_t id);
+TFX_API uint16_t tfx_view_get_height(uint8_t id);
+TFX_API void tfx_view_get_dimensions(uint8_t id, uint16_t *w, uint16_t *h);
 
 TFX_API tfx_program tfx_program_new(const char *vss, const char *fss, const char *attribs[]);
 
@@ -203,12 +190,12 @@ TFX_API void tfx_set_callback(tfx_draw_callback cb);
 TFX_API void tfx_set_state(uint64_t flags);
 TFX_API void tfx_set_vertices(tfx_buffer *vbo, int count);
 TFX_API void tfx_set_indices(tfx_buffer *ibo, int count);
-TFX_API void tfx_submit(tfx_view *view, tfx_program program, bool retain);
-TFX_API void tfx_touch(tfx_view *view);
+TFX_API void tfx_submit(uint8_t id, tfx_program program, bool retain);
+TFX_API void tfx_touch(uint8_t id);
 
-TFX_API void tfx_blit(tfx_view *src, tfx_view *dst, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
+TFX_API void tfx_blit(uint8_t src, uint8_t dst, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
 
-TFX_API tfx_stats tfx_frame(tfx_view **views);
+TFX_API tfx_stats tfx_frame();
 
 #undef TFX_API
 

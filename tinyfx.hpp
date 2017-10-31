@@ -1,9 +1,6 @@
 #pragma once
 
-extern "C" {
-#include "tinyfx.h"
-}
-
+#include <tinyfx.h>
 #include <string>
 
 namespace tfx {
@@ -48,36 +45,36 @@ namespace tfx {
 	};
 
 	struct View {
-		tfx_view view;
-		View() {
-			this->view = tfx_view_new();
+		uint8_t id;
+		View(uint8_t _id) {
+			this->id = _id;
 		}
 		inline void set_canvas(Canvas *canvas) {
-			tfx_view_set_canvas(&this->view, &canvas->canvas);
+			tfx_view_set_canvas(this->id, &canvas->canvas);
 		}
 		inline void set_clear_color(int color = 0x000000ff) {
-			tfx_view_set_clear_color(&this->view, color);
+			tfx_view_set_clear_color(this->id, color);
 		}
 		inline void set_clear_depth(float depth = 1.0f) {
-			tfx_view_set_clear_depth(&this->view, depth);
+			tfx_view_set_clear_depth(this->id, depth);
 		}
 		inline void set_depth_test(tfx_depth_test mode = TFX_DEPTH_TEST_NONE) {
-			tfx_view_set_depth_test(&this->view, mode);
+			tfx_view_set_depth_test(this->id, mode);
 		}
 		inline void set_scissor(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
-			tfx_view_set_scissor(&this->view, x, y, w, h);
+			tfx_view_set_scissor(this->id, x, y, w, h);
 		}
 		inline uint16_t get_width() {
-			return tfx_view_get_width(&this->view);
+			return tfx_view_get_width(this->id);
 		}
 		inline uint16_t get_height() {
-			return tfx_view_get_width(&this->view);
+			return tfx_view_get_width(this->id);
 		}
 		inline void get_dimensions(uint16_t *w, uint16_t *h) {
-			tfx_view_get_dimensions(&this->view, w, h);
+			tfx_view_get_dimensions(this->id, w, h);
 		}
 		inline void touch() {
-			tfx_touch(&this->view);
+			tfx_touch(this->id);
 		}
 	};
 
@@ -97,8 +94,8 @@ namespace tfx {
 	inline void shutdown() {
 		tfx_shutdown();
 	}
-	inline tfx_stats frame(tfx_view **views) {
-		return tfx_frame(views);
+	inline tfx_stats frame() {
+		return tfx_frame();
 	}
 	inline void set_callback(tfx_draw_callback cb) {
 		tfx_set_callback(cb);
@@ -113,7 +110,7 @@ namespace tfx {
 		tfx_set_indices(&ibo->buffer, count);
 	}
 	inline void submit(View *view, Program *program, bool retain = false) {
-		tfx_submit(&view->view, program->program, retain);
+		tfx_submit(view->id, program->program, retain);
 	}
 	// inline void blit(tfx_view *src, tfx_view *dst, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
 

@@ -73,6 +73,8 @@ static void * stb__sbgrowf(void *arr, int increment, int itemsize)
 
 #define CHECK(fn) fn; { GLenum _status; while ((_status = glGetError())) { if (_status == GL_NO_ERROR) break; printf("%s:%d GL ERROR: %d\n", __FILE__, __LINE__, _status); } }
 
+#define VIEW_MAX 256
+
 // view flags
 enum {
 	// clear modes
@@ -86,6 +88,19 @@ enum {
 	// scissor test
 	TFX_VIEW_SCISSOR       = 1 << 4
 };
+
+typedef struct tfx_view {
+	uint32_t flags;
+
+	tfx_canvas *canvas;
+	tfx_draw    *draws;
+	tfx_blit_op *blits;
+
+	int   clear_color;
+	float clear_depth;
+
+	tfx_rect scissor_rect;
+} tfx_view;
 
 #define TFX_VIEW_CLEAR_MASK      (TFX_VIEW_CLEAR_COLOR | TFX_VIEW_CLEAR_DEPTH)
 #define TFX_VIEW_DEPTH_TEST_MASK (TFX_VIEW_DEPTH_TEST_LT | TFX_VIEW_DEPTH_TEST_GT)
@@ -139,6 +154,7 @@ tfx_caps tfx_dump_caps() {
 static tfx_uniform *uniforms = NULL;
 static uint8_t *uniform_buffer = NULL;
 static uint8_t *ub_cursor = NULL;
+static tfx_view views[VIEW_MAX];
 
 void tfx_reset(uint16_t width, uint16_t height) {
 	memset(&backbuffer, 0, sizeof(tfx_canvas));
@@ -151,6 +167,8 @@ void tfx_reset(uint16_t width, uint16_t height) {
 		memset(uniform_buffer, 0, TFX_UNIFORM_BUFFER_SIZE);
 		ub_cursor = uniform_buffer;
 	}
+
+	memset(&views, 0, sizeof(tfx_view)*VIEW_MAX);
 }
 
 void tfx_shutdown() {
@@ -427,31 +445,28 @@ void tfx_uniform_set_int(tfx_uniform *uniform, int *data) {
 	sb_push(uniforms, *uniform);
 }
 
-tfx_view tfx_view_new() {
-	tfx_view v;
-	memset(&v, 0, sizeof(tfx_view));
-
-	return v;
-}
-
-void tfx_view_set_canvas(tfx_view *view, tfx_canvas *canvas) {
+void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas) {
+	tfx_view *view = &views[id];
 	assert(view != NULL);
 	view->canvas = canvas;
 }
 
-void tfx_view_set_clear_color(tfx_view *view, int color) {
+void tfx_view_set_clear_color(uint8_t id, int color) {
+	tfx_view *view = &views[id];
 	assert(view != NULL);
 	view->flags |= TFX_VIEW_CLEAR_COLOR;
 	view->clear_color = color;
 }
 
-void tfx_view_set_clear_depth(tfx_view *view, float depth) {
+void tfx_view_set_clear_depth(uint8_t id, float depth) {
+	tfx_view *view = &views[id];
 	assert(view != NULL);
 	view->flags |= TFX_VIEW_CLEAR_DEPTH;
 	view->clear_depth = depth;
 }
 
-void tfx_view_set_depth_test(tfx_view *view, tfx_depth_test mode) {
+void tfx_view_set_depth_test(uint8_t id, tfx_depth_test mode) {
+	tfx_view *view = &views[id];
 	assert(view != NULL);
 
 	view->flags &= ~TFX_VIEW_DEPTH_TEST_MASK;
@@ -469,7 +484,8 @@ void tfx_view_set_depth_test(tfx_view *view, tfx_depth_test mode) {
 	}
 }
 
-uint16_t tfx_view_get_width(tfx_view *view) {
+uint16_t tfx_view_get_width(uint8_t id) {
+	tfx_view *view = &views[id];
 	assert(view != NULL);
 
 	if (view->canvas != NULL) {
@@ -479,7 +495,8 @@ uint16_t tfx_view_get_width(tfx_view *view) {
 	return backbuffer.width;
 }
 
-uint16_t tfx_view_get_height(tfx_view *view) {
+uint16_t tfx_view_get_height(uint8_t id) {
+	tfx_view *view = &views[id];
 	assert(view != NULL);
 
 	if (view->canvas != NULL) {
@@ -489,17 +506,17 @@ uint16_t tfx_view_get_height(tfx_view *view) {
 	return backbuffer.height;
 }
 
-void tfx_view_get_dimensions(tfx_view *view, uint16_t *w, uint16_t *h) {
-	assert(view != NULL);
+void tfx_view_get_dimensions(uint8_t id, uint16_t *w, uint16_t *h) {
 	if (w) {
-		*w = tfx_view_get_width(view);
+		*w = tfx_view_get_width(id);
 	}
 	if (h) {
-		*h = tfx_view_get_height(view);
+		*h = tfx_view_get_height(id);
 	}
 }
 
-void tfx_view_set_scissor(tfx_view *view, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+void tfx_view_set_scissor(uint8_t id, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+	tfx_view *view = &views[id];
 	view->flags |= TFX_VIEW_SCISSOR;
 
 	tfx_rect rect;
@@ -591,7 +608,8 @@ void ts_delete(nlist **hashtab) {
 	}
 }
 
-void tfx_submit(tfx_view *view, tfx_program program, bool retain) {
+void tfx_submit(uint8_t id, tfx_program program, bool retain) {
+	tfx_view *view = &views[id];
 	tmp_draw.program = program;
 	assert(program != 0);
 
@@ -632,7 +650,8 @@ void tfx_submit(tfx_view *view, tfx_program program, bool retain) {
 	}
 }
 
-void tfx_touch(tfx_view *view) {
+void tfx_touch(uint8_t id) {
+	tfx_view *view = &views[id];
 	assert(view != NULL);
 
 	reset();
@@ -647,10 +666,7 @@ static inline tfx_canvas *get_canvas(tfx_view *view) {
 	return &backbuffer;
 }
 
-void tfx_blit(tfx_view *dst, tfx_view *src, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
-	assert(src != NULL);
-	assert(dst != NULL);
-
+void tfx_blit(uint8_t dst, uint8_t src, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
 	tfx_rect rect;
 	rect.x = x;
 	rect.y = y;
@@ -658,13 +674,14 @@ void tfx_blit(tfx_view *dst, tfx_view *src, uint16_t x, uint16_t y, uint16_t w, 
 	rect.h = h;
 
 	tfx_blit_op blit;
-	blit.source = get_canvas(src);
+	blit.source = get_canvas(&views[src]);
 	blit.rect = rect;
 
 	// this would cause a GL error and doesn't make sense.
-	assert(blit.source != get_canvas(dst));
+	assert(blit.source != get_canvas(&views[dst]));
 
-	sb_push(dst->blits, blit);
+	tfx_view *view = &views[dst];
+	sb_push(view->blits, blit);
 }
 
 static void release_compiler() {
@@ -682,7 +699,7 @@ static void release_compiler() {
 	shaderc_allocated = false;
 }
 
-tfx_stats tfx_frame(tfx_view **views) {
+tfx_stats tfx_frame() {
 	/* This isn't used on RPi, but should free memory on some devices. When
 	 * you call tfx_frame, you should be done with your shader compiles for
 	 * a good while, since that should only be done during init/loading. */
@@ -693,8 +710,8 @@ tfx_stats tfx_frame(tfx_view **views) {
 
 	int last_count = 0;
 
-	for (tfx_view **it = views; *it != NULL; it++) {
-		tfx_view *view = *it;
+	for (int id = 0; id < VIEW_MAX; id++) {
+		tfx_view *view = &views[id];
 
 		int nd = sb_count(view->draws);
 		if (nd == 0) {
@@ -875,5 +892,6 @@ tfx_stats tfx_frame(tfx_view **views) {
 
 	return stats;
 }
+#undef MAX_VIEW
 
 #endif // TFX_IMPLEMENTATION

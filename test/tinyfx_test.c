@@ -42,15 +42,15 @@ void run(state_t *state) {
 
 	tfx_canvas fb = tfx_canvas_new(state->internal_width, state->internal_height, TFX_FORMAT_RGB565_D16);
 
-	tfx_view v = tfx_view_new();
-	tfx_view_set_canvas(&v, &fb);
-	tfx_view_set_clear_color(&v, 0xff00ffff);
-	tfx_view_set_clear_depth(&v, 1.0);
+	uint8_t v = 0;
+	tfx_view_set_canvas(v, &fb);
+	tfx_view_set_clear_color(v, 0xff00ffff);
+	tfx_view_set_clear_depth(v, 1.0);
 
-	tfx_view back = tfx_view_new();
-	tfx_view_set_clear_color(&back, 0x555555ff);
-	tfx_view_set_clear_depth(&back, 1.0);
-	tfx_view_set_depth_test(&back, TFX_DEPTH_TEST_LT);
+	uint8_t back = 1;
+	tfx_view_set_clear_color(back, 0x555555ff);
+	tfx_view_set_clear_depth(back, 1.0);
+	tfx_view_set_depth_test(back, TFX_DEPTH_TEST_LT);
 
 	char *vss = read_file("shader.vs.glsl");
 	char *fss = read_file("shader.fs.glsl");
@@ -73,12 +73,6 @@ void run(state_t *state) {
 	free(vss);
 	free(fss);
 
-	tfx_view *views[] = {
-		&v,
-		&back,
-		NULL
-	};
-
 	float verts[] = {
 		 0.0f,  0.5f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f,
 		-0.5f, -0.5f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f,
@@ -99,16 +93,16 @@ void run(state_t *state) {
 	while (!state->dead) {
 		state->dead = poll_events(state);
 		// tfx_touch(&v);
-		tfx_touch(&back);
+		tfx_touch(back);
 
 		// tfx_blit(&v, &back, 0, 0, tfx_view_get_width(&back), tfx_view_get_height(&back));
 
 		tfx_set_vertices(&vbo, 3);
 		tfx_set_state(0);
-		tfx_submit(&back, prog, false);
+		tfx_submit(back, prog, false);
 
 		// process command buffer
-		tfx_frame(views);
+		tfx_frame();
 		SDL_GL_SwapWindow(state->window);
 	}
 
