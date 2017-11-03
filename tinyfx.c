@@ -1,5 +1,5 @@
 #define TFX_IMPLEMENTATION
-// #define TFX_USE_GLES3
+// #define TFX_USE_GLES31
 #define TFX_DEBUG
 #include "tinyfx.h"
 
@@ -8,20 +8,31 @@
 \**********************/
 #ifdef TFX_IMPLEMENTATION
 
+// TODO: grab function pointers at runtime...
+
 #ifdef TFX_USE_GL
 #	if TFX_USE_GL >= 32
 #		include <GL/glcorearb.h>
+#		define TFX_MODERN 1
+#		if TFX_USE_GL >= 43
+#			define TFX_COMPUTE 1
+#		endif
 #	else
 #		include <GL/gl.h>
 #	endif
 #else
-#	ifdef TFX_USE_GLES3
+#	ifdef TFX_USE_GLES31
 #		include <GLES3/gl31.h>
+#		define TFX_MODERN 1
+#		define TFX_COMPUTE 1
 #	else
 #		include <GLES2/gl2.h>
 #	endif
 #	ifndef GL_MULTISAMPLE
 #		define GL_MULTISAMPLE 0x809D
+#	endif
+#	ifndef GL_COMPUTE_SHADER
+#		define GL_COMPUTE_SHADER 0x91B9
 #	endif
 #endif
 
@@ -111,11 +122,34 @@ enum {
 	TFX_VIEW_SCISSOR       = 1 << 4
 };
 
+typedef struct tfx_draw {
+	tfx_draw_callback callback;
+	uint32_t flags;
+
+	tfx_program program;
+	tfx_uniform *uniforms;
+
+	tfx_texture *textures[8];
+	tfx_buffer *vbo;
+	tfx_buffer *ibo;
+
+	size_t offset;
+	uint16_t indices;
+
+#ifdef TFX_COMPUTE
+	// for compute jobs
+	int threads_x;
+	int threads_y;
+	int threads_z;
+#endif
+} tfx_draw;
+
 typedef struct tfx_view {
 	uint32_t flags;
 
 	tfx_canvas *canvas;
 	tfx_draw    *draws;
+	tfx_draw    *jobs;
 	tfx_blit_op *blits;
 
 	int   clear_color;
@@ -153,7 +187,8 @@ tfx_caps tfx_get_caps() {
 	memset(&caps, 0, sizeof(tfx_caps));
 
 	// TODO: GLES needs glGetString, but GL core profile needs glGetStringi
-	char *exts = (char*)CHECK(glGetString(GL_EXTENSIONS));
+	const char *real = (char*)CHECK(glGetString(GL_EXTENSIONS));
+	char *exts = strdup(real);
 	char *pch = strtok(exts, " ");
 	int len = 0;
 	const char **supported = NULL;
@@ -181,7 +216,9 @@ tfx_caps tfx_get_caps() {
 	sb_free(supported);
 
 	caps.multisample = available_exts[0].supported;
+#ifdef TFX_COMPUTE
 	caps.compute = available_exts[1].supported;
+#endif
 	caps.float_canvas = available_exts[2].supported;
 
 	return caps;
@@ -202,7 +239,8 @@ void tfx_dump_caps() {
 	printf("GL vendor: %s\n", glGetString(GL_VENDOR));
 	printf("GL version: %s\n", glGetString(GL_VERSION));
 
-	char *exts = (char*)CHECK(glGetString(GL_EXTENSIONS));
+	const char *real = (char*)CHECK(glGetString(GL_EXTENSIONS));
+	char *exts = strdup(real);
 	int len = 0;
 
 	puts("GL extensions:");
@@ -214,8 +252,8 @@ void tfx_dump_caps() {
 	}
 
 	puts("TinyFX renderer: "
-	#ifdef TFX_USE_GLES3 // NYI
-		"GLES3"
+	#ifdef TFX_USE_GLES31 // NYI
+		"GLES31"
 	#else
 		"GLES2"
 	#endif
@@ -238,6 +276,7 @@ static struct {
 	void *cursor;
 	uint32_t *offsets;
 	uint16_t count;
+	GLuint gl_id;
 } transient_buffer;
 
 static tfx_caps caps;
@@ -247,6 +286,20 @@ static void tvb_reset() {
 	transient_buffer.offsets = NULL;
 	transient_buffer.count = 0;
 	transient_buffer.cursor = transient_buffer.data;
+
+	if (!transient_buffer.gl_id) {
+		glGenBuffers(1, &transient_buffer.gl_id);
+		glBindBuffer(GL_ARRAY_BUFFER, transient_buffer.gl_id);
+		glBufferData(GL_ARRAY_BUFFER, TFX_TRANSIENT_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
+	}
+}
+
+void tfx_set_transient_buffer() {
+	//
+}
+
+uint32_t tfx_transient_buffer_get_available() {
+	return TFX_TRANSIENT_BUFFER_SIZE - (transient_buffer.cursor - transient_buffer.data);
 }
 
 void tfx_reset(uint16_t width, uint16_t height) {
@@ -279,6 +332,10 @@ void tfx_shutdown() {
 
 	free(transient_buffer.data);
 	transient_buffer.data = NULL;
+
+	if (transient_buffer.gl_id) {
+		glDeleteBuffers(1, &transient_buffer.gl_id);
+	}
 
 	// this can happen if you shutdown before calling frame()
 	if (uniforms) {
@@ -357,6 +414,38 @@ tfx_program tfx_program_new(const char *vss, const char *fss, const char *attrib
 
 	CHECK(glDeleteShader(vs));
 	CHECK(glDeleteShader(fs));
+
+	return program;
+}
+
+tfx_program tfx_program_cs_new(const char *css) {
+	if (!caps.compute) {
+		return 0;
+	}
+
+	GLuint cs = load_shader(GL_COMPUTE_SHADER, css);
+	GLuint program = CHECK(glCreateProgram());
+	if (!program) {
+		return 0;
+	}
+	CHECK(glAttachShader(program, cs));
+	CHECK(glLinkProgram(program));
+
+	GLint linked;
+	CHECK(glGetProgramiv(program, GL_LINK_STATUS, &linked));
+	if (!linked) {
+		GLint infoLen = 0;
+		CHECK(glGetProgramiv(program, GL_INFO_LOG_LENGTH, &infoLen));
+		if (infoLen > 0) {
+			char* infoLog = malloc(infoLen);
+			CHECK(glGetProgramInfoLog(program, infoLen, NULL, infoLog));
+			fprintf(stderr, "Error linking program:\n%s\n", infoLog);
+			free(infoLog);
+		}
+		CHECK(glDeleteProgram(program));
+		return 0;
+	}
+	CHECK(glDeleteShader(cs));
 
 	return program;
 }
@@ -767,43 +856,68 @@ void ts_delete(nlist **hashtab) {
 	}
 }
 
+static void push_uniforms(tfx_program program, tfx_draw *add_state) {
+	nlist **found = ts_new();
+
+	// TODO: this entire thing could probably be much faster.
+	// TODO: look into caching uniform locations. never trust GL.
+	int n = sb_count(uniforms);
+	for (int i = n-1; i >= 0; i--) {
+		tfx_uniform uniform = uniforms[i];
+		GLuint loc = CHECK(glGetUniformLocation(program, uniform.name));
+		if (loc >= 0) {
+			// only record the last update for a given uniform
+			if (!ts_lookup(found, uniform.name)) {
+				tfx_uniform found_uniform;
+				memcpy(&found_uniform, &uniform, sizeof(tfx_uniform));
+
+				found_uniform.data = ub_cursor;
+				memcpy(found_uniform.data, uniform.data, uniform.size);
+				ub_cursor += uniform.size;
+
+				ts_set(found, uniform.name);
+				sb_push(add_state->uniforms, found_uniform);
+			}
+		}
+	}
+
+	ts_delete(found);
+}
+
+void tfx_dispatch(uint8_t id, tfx_program program, int x, int y, int z) {
+#ifdef TFX_COMPUTE
+	tfx_view *view = &views[id];
+	tmp_draw.program = program;
+	assert(program != 0);
+	assert(view != NULL);
+
+	tfx_draw add_state;
+	memcpy(&add_state, &tmp_draw, sizeof(tfx_draw));
+	add_state.threads_x = x;
+	add_state.threads_y = y;
+	add_state.threads_z = z;
+
+	push_uniforms(program, &add_state);
+	sb_push(view->jobs, add_state);
+
+	reset();
+#else
+	reset();
+	return;
+#endif
+}
+
 void tfx_submit(uint8_t id, tfx_program program, bool retain) {
 	tfx_view *view = &views[id];
 	tmp_draw.program = program;
 	assert(program != 0);
+	assert(view != NULL);
 
-	if (view != NULL) {
-		tfx_draw add_state;
-		memcpy(&add_state, &tmp_draw, sizeof(tfx_draw));
+	tfx_draw add_state;
+	memcpy(&add_state, &tmp_draw, sizeof(tfx_draw));
+	push_uniforms(program, &add_state);
+	sb_push(view->draws, add_state);
 
-		nlist **found = ts_new();
-
-		// TODO: this entire thing could probably be much faster.
-		// TODO: look into caching uniform locations. never trust GL.
-		int n = sb_count(uniforms);
-		for (int i = n-1; i >= 0; i--) {
-			tfx_uniform uniform = uniforms[i];
-			GLuint loc = CHECK(glGetUniformLocation(program, uniform.name));
-			if (loc >= 0) {
-				// only record the last update for a given uniform
-				if (!ts_lookup(found, uniform.name)) {
-					tfx_uniform found_uniform;
-					memcpy(&found_uniform, &uniform, sizeof(tfx_uniform));
-
-					found_uniform.data = ub_cursor;
-					memcpy(found_uniform.data, uniform.data, uniform.size);
-					ub_cursor += uniform.size;
-
-					ts_set(found, uniform.name);
-					sb_push(add_state.uniforms, found_uniform);
-				}
-			}
-		}
-
-		ts_delete(found);
-
-		sb_push(view->draws, add_state);
-	}
 	if (!retain) {
 		reset();
 	}
@@ -869,7 +983,7 @@ tfx_stats tfx_frame() {
 
 	int last_count = 0;
 
-#if defined(TFX_USE_GL) && TFX_USE_GL >= 32
+#ifdef TFX_MODERN
 	GLuint vao;
 	glGenVertexArrays(1, &vao);
 	glBindVertexArray(vao);
@@ -877,6 +991,21 @@ tfx_stats tfx_frame() {
 
 	for (int id = 0; id < VIEW_MAX; id++) {
 		tfx_view *view = &views[id];
+
+		GLuint program = 0;
+#ifdef TFX_COMPUTE
+		if (caps.compute) {
+			int cd = sb_count(view->jobs);
+			for (int i = 0; i < cd; i++) {
+				tfx_draw job = view->draws[i];
+				if (job.program != program) {
+					CHECK(glUseProgram(job.program));
+					program = job.program;
+				}
+				CHECK(glDispatchCompute(job.threads_x, job.threads_y, job.threads_z));
+			}
+		}
+#endif
 
 		int nd = sb_count(view->draws);
 		if (nd == 0) {
@@ -932,7 +1061,6 @@ tfx_stats tfx_frame() {
 		}
 		*/
 
-		GLuint program = 0;
 
 		if (view->flags & TFX_VIEW_DEPTH_TEST_MASK) {
 			CHECK(glEnable(GL_DEPTH_TEST));
@@ -1075,7 +1203,7 @@ tfx_stats tfx_frame() {
 
 	ub_cursor = uniform_buffer;
 
-#if defined(TFX_USE_GL) && TFX_USE_GL >= 32
+#ifdef TFX_MODERN
 	glDeleteVertexArrays(1, &vao);
 #endif
 

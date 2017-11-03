@@ -139,21 +139,6 @@ typedef struct tfx_buffer {
 
 typedef void (*tfx_draw_callback)(void);
 
-typedef struct tfx_draw {
-	tfx_draw_callback callback;
-	uint32_t flags;
-
-	tfx_program program;
-	tfx_uniform *uniforms;
-
-	tfx_texture *textures[8];
-	tfx_buffer *vbo;
-	tfx_buffer *ibo;
-
-	size_t offset;
-	uint16_t indices;
-} tfx_draw;
-
 typedef struct tfx_rect {
 	uint16_t x;
 	uint16_t y;
@@ -206,6 +191,7 @@ TFX_API uint16_t tfx_view_get_height(uint8_t id);
 TFX_API void tfx_view_get_dimensions(uint8_t id, uint16_t *w, uint16_t *h);
 
 TFX_API tfx_program tfx_program_new(const char *vss, const char *fss, const char *attribs[]);
+TFX_API tfx_program tfx_program_cs_new(const char *css);
 
 TFX_API tfx_uniform tfx_uniform_new(const char *name, tfx_uniform_type type, int count);
 
