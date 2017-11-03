@@ -7,7 +7,24 @@
 | implementation stuff |
 \**********************/
 #ifdef TFX_IMPLEMENTATION
-#include <GLES2/gl2.h>
+
+#ifdef TFX_USE_GL
+#	if TFX_USE_GL >= 32
+#		include <GL/glcorearb.h>
+#	else
+#		include <GL/gl.h>
+#	endif
+#else
+#	ifdef TFX_USE_GLES3
+#		include <GLES3/gl31.h>
+#	else
+#		include <GLES2/gl2.h>
+#	endif
+#	ifndef GL_MULTISAMPLE
+#		define GL_MULTISAMPLE 0x809D
+#	endif
+#endif
+
 #include <string.h>
 #include <stdio.h>
 #ifdef TFX_DEBUG
@@ -19,6 +36,11 @@
 #ifndef TFX_UNIFORM_BUFFER_SIZE
 // by default, allow up to 8MB of uniform updates per frame.
 #define TFX_UNIFORM_BUFFER_SIZE 1024*1024*8
+#endif
+
+#ifndef TFX_TRANSIENT_BUFFER_SIZE
+// by default, allow up to 8MB of transient buffer data per frame.
+#define TFX_TRANSIENT_BUFFER_SIZE 1024*1024*8
 #endif
 
 // The following code is public domain, from https://github.com/nothings/stb
@@ -114,7 +136,64 @@ typedef struct tfx_view {
 
 static tfx_canvas backbuffer;
 
-tfx_caps tfx_dump_caps() {
+typedef struct tfx_glext {
+	const char *ext;
+	bool supported;
+} tfx_glext;
+
+static tfx_glext available_exts[] = {
+	{ "GL_ARB_multisample", false },
+	{ "GL_ARB_compute_shader", false },
+	{ "GL_ARB_texture_float", false },
+	{ NULL, false }
+};
+
+tfx_caps tfx_get_caps() {
+	tfx_caps caps;
+	memset(&caps, 0, sizeof(tfx_caps));
+
+	// TODO: GLES needs glGetString, but GL core profile needs glGetStringi
+	char *exts = (char*)CHECK(glGetString(GL_EXTENSIONS));
+	char *pch = strtok(exts, " ");
+	int len = 0;
+	const char **supported = NULL;
+	while (pch != NULL) {
+		sb_push(supported, pch);
+		pch = strtok(NULL, " ");
+		len++;
+	}
+
+	int n = sb_count(supported);
+	for (int i = 0; i < n; i++) {
+		const char *search = supported[i];
+
+		for (int j = 0; ; j++) {
+			tfx_glext *tmp = &available_exts[j];
+			if (!tmp->ext) {
+				break;
+			}
+			if (strcmp(tmp->ext, search) == 0) {
+				tmp->supported = true;
+				break;
+			}
+		}
+	}
+	sb_free(supported);
+
+	caps.multisample = available_exts[0].supported;
+	caps.compute = available_exts[1].supported;
+	caps.float_canvas = available_exts[2].supported;
+
+	return caps;
+}
+
+static void tfx_printb(const char *k, bool v) {
+	printf("TinyFX %s: %s\n", k, v? "true" : "false");
+}
+
+void tfx_dump_caps() {
+	tfx_caps caps = tfx_get_caps();
+
 	// I am told by the docs that this can be 0.
 	// It's not on the RPi, but since it's only a few lines of code...
 	int release_shader_c = 0;
@@ -123,7 +202,7 @@ tfx_caps tfx_dump_caps() {
 	printf("GL vendor: %s\n", glGetString(GL_VENDOR));
 	printf("GL version: %s\n", glGetString(GL_VERSION));
 
-	char *exts = (char*)glGetString(GL_EXTENSIONS);
+	char *exts = (char*)CHECK(glGetString(GL_EXTENSIONS));
 	int len = 0;
 
 	puts("GL extensions:");
@@ -142,21 +221,37 @@ tfx_caps tfx_dump_caps() {
 	#endif
 	);
 
-	tfx_caps caps;
-	memset(&caps, 0, sizeof(tfx_caps));
-	caps.compute = false;
-	caps.float_canvas = false;
-
-	return caps;
+	tfx_printb("compute", caps.compute);
+	tfx_printb("fp canvas", caps.float_canvas);
+	tfx_printb("multisample", caps.multisample);
 }
 
 // uniforms updated this frame
 static tfx_uniform *uniforms = NULL;
 static uint8_t *uniform_buffer = NULL;
 static uint8_t *ub_cursor = NULL;
+
 static tfx_view views[VIEW_MAX];
 
+static struct {
+	void *data;
+	void *cursor;
+	uint32_t *offsets;
+	uint16_t count;
+} transient_buffer;
+
+static tfx_caps caps;
+
+static void tvb_reset() {
+	sb_free(transient_buffer.offsets);
+	transient_buffer.offsets = NULL;
+	transient_buffer.count = 0;
+	transient_buffer.cursor = transient_buffer.data;
+}
+
 void tfx_reset(uint16_t width, uint16_t height) {
+	caps = tfx_get_caps();
+
 	memset(&backbuffer, 0, sizeof(tfx_canvas));
 	backbuffer.gl_id  = 0;
 	backbuffer.width  = width;
@@ -168,6 +263,12 @@ void tfx_reset(uint16_t width, uint16_t height) {
 		ub_cursor = uniform_buffer;
 	}
 
+	if (!transient_buffer.data) {
+		transient_buffer.data = malloc(TFX_TRANSIENT_BUFFER_SIZE);
+		memset(transient_buffer.data, 0, TFX_TRANSIENT_BUFFER_SIZE);
+		tvb_reset();
+	}
+
 	memset(&views, 0, sizeof(tfx_view)*VIEW_MAX);
 }
 
@@ -175,6 +276,9 @@ void tfx_shutdown() {
 	// TODO: clean up all GL objects, allocs, etc.
 	free(uniform_buffer);
 	uniform_buffer = NULL;
+
+	free(transient_buffer.data);
+	transient_buffer.data = NULL;
 
 	// this can happen if you shutdown before calling frame()
 	if (uniforms) {
@@ -331,18 +435,18 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, t
 	t.format = format;
 
 	GLuint id = 0;
-	glGenTextures(1, &id);
-	glBindTexture(GL_TEXTURE_2D, id);
+	CHECK(glGenTextures(1, &id));
+	CHECK(glBindTexture(GL_TEXTURE_2D, id));
 	if ((flags & TFX_TEXTURE_FILTER_POINT) == TFX_TEXTURE_FILTER_POINT) {
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST);
+		CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
+		CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST));
 	}
 	else if ((flags & TFX_TEXTURE_FILTER_LINEAR) == TFX_TEXTURE_FILTER_LINEAR || !flags) {
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+		CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+		CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR));
 	}
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+	CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
 
 	GLenum gl_fmt = 0;
 	GLenum gl_type = 0;
@@ -360,10 +464,10 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, t
 			break;
 	}
 
-	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-	glTexImage2D(GL_TEXTURE_2D, 0, gl_fmt, w, h, 0, gl_fmt, gl_type, data);
+	CHECK(glPixelStorei(GL_UNPACK_ALIGNMENT, 1));
+	CHECK(glTexImage2D(GL_TEXTURE_2D, 0, gl_fmt, w, h, 0, gl_fmt, gl_type, data));
 	if (gen_mips && data) {
-		glGenerateMipmap(GL_TEXTURE_2D);
+		CHECK(glGenerateMipmap(GL_TEXTURE_2D));
 	}
 
 	t.gl_id = id;
@@ -765,6 +869,12 @@ tfx_stats tfx_frame() {
 
 	int last_count = 0;
 
+#if defined(TFX_USE_GL) && TFX_USE_GL >= 32
+	GLuint vao;
+	glGenVertexArrays(1, &vao);
+	glBindVertexArray(vao);
+#endif
+
 	for (int id = 0; id < VIEW_MAX; id++) {
 		tfx_view *view = &views[id];
 
@@ -845,6 +955,14 @@ tfx_stats tfx_frame() {
 				program = draw.program;
 			}
 			CHECK(glDepthMask((draw.flags & TFX_STATE_DEPTH_WRITE) > 0));
+			if (caps.multisample) {
+				if (draw.flags & TFX_STATE_MSAA) {
+					glEnable(GL_MULTISAMPLE);
+				}
+				else {
+					glDisable(GL_MULTISAMPLE);
+				}
+			}
 			if (draw.flags & TFX_STATE_CULL_CW) {
 				CHECK(glEnable(GL_CULL_FACE));
 				CHECK(glFrontFace(GL_CW));
@@ -950,10 +1068,16 @@ tfx_stats tfx_frame() {
 
 	reset();
 
+	tvb_reset();
+
 	sb_free(uniforms);
 	uniforms = NULL;
 
 	ub_cursor = uniform_buffer;
+
+#if defined(TFX_USE_GL) && TFX_USE_GL >= 32
+	glDeleteVertexArrays(1, &vao);
+#endif
 
 	return stats;
 }

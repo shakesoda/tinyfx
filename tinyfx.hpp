@@ -91,8 +91,11 @@ namespace tfx {
 		}
 	};
 
-	inline tfx_caps dump_caps() {
-		return tfx_dump_caps();
+	inline void dump_caps() {
+		tfx_dump_caps();
+	}
+	inline tfx_caps get_caps() {
+		return tfx_get_caps();
 	}
 	inline void touch(uint8_t id) {
 		tfx_touch(id);
@@ -123,7 +126,7 @@ namespace tfx {
 		tfx_set_state(flags);
 	}
 	template <typename T>
-	inline void set_vertices(Buffer<T> &vbo, int count) {
+	inline void set_vertices(Buffer<T> &vbo, int count = 0) {
 		tfx_set_vertices(&vbo.buffer, count);
 	}
 	template <typename T>

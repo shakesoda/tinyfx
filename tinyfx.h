@@ -42,7 +42,16 @@ enum {
 	TFX_STATE_DRAW_LINE_STRIP = 1 << 6,
 	TFX_STATE_DRAW_LINE_LOOP  = 1 << 7,
 	TFX_STATE_DRAW_TRI_STRIP  = 1 << 8,
-	TFX_STATE_DRAW_TRI_FAN    = 1 << 9
+	TFX_STATE_DRAW_TRI_FAN    = 1 << 9,
+
+	// misc state
+	TFX_STATE_MSAA            = 1 << 10,
+
+	TFX_STATE_DEFAULT = 0
+		| TFX_STATE_CULL_CCW
+		| TFX_STATE_MSAA
+		| TFX_STATE_DEPTH_WRITE
+		| TFX_STATE_BLEND_ALPHA
 };
 
 enum {
@@ -165,13 +174,15 @@ typedef struct tfx_stats {
 typedef struct tfx_caps {
 	bool compute;
 	bool float_canvas;
+	bool multisample;
 } tfx_caps;
 
 // TODO
 // #define TFX_API __attribute__ ((visibility("default")))
 #define TFX_API
 
-TFX_API tfx_caps tfx_dump_caps();
+TFX_API tfx_caps tfx_get_caps();
+TFX_API void tfx_dump_caps();
 TFX_API void tfx_reset(uint16_t width, uint16_t height);
 TFX_API void tfx_shutdown();
 
