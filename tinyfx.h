@@ -4,7 +4,6 @@
 extern "C" {
 #endif
 
-#include <GLES2/gl2.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -72,7 +71,7 @@ typedef enum tfx_format {
 	TFX_FORMAT_D16,
 } tfx_format;
 
-typedef GLuint tfx_program;
+typedef unsigned tfx_program;
 
 typedef enum tfx_uniform_type {
 	TFX_UNIFORM_INT = 0,
@@ -98,14 +97,14 @@ typedef struct tfx_uniform {
 } tfx_uniform;
 
 typedef struct tfx_texture {
+	unsigned gl_id;
 	uint16_t width;
 	uint16_t height;
 	tfx_format format;
-	GLuint gl_id;
 } tfx_texture;
 
 typedef struct tfx_canvas {
-	GLuint gl_id;
+	unsigned gl_id;
 	uint16_t width;
 	uint16_t height;
 	tfx_format format;
@@ -133,7 +132,7 @@ typedef struct tfx_vertex_format {
 } tfx_vertex_format;
 
 typedef struct tfx_buffer {
-	GLuint gl_id;
+	unsigned gl_id;
 	tfx_vertex_format *format;
 } tfx_buffer;
 
