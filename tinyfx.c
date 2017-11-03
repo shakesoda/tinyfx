@@ -132,6 +132,7 @@ typedef struct tfx_draw {
 	tfx_texture *textures[8];
 	tfx_buffer *vbo;
 	tfx_buffer *ibo;
+	tfx_vertex_format *tvb_fmt;
 
 	size_t offset;
 	uint16_t indices;
@@ -272,34 +273,41 @@ static uint8_t *ub_cursor = NULL;
 static tfx_view views[VIEW_MAX];
 
 static struct {
-	void *data;
-	void *cursor;
-	uint32_t *offsets;
-	uint16_t count;
-	GLuint gl_id;
+	uint8_t *data;
+	uint32_t offset;
+	tfx_buffer buf;
 } transient_buffer;
 
 static tfx_caps caps;
 
 static void tvb_reset() {
-	sb_free(transient_buffer.offsets);
-	transient_buffer.offsets = NULL;
-	transient_buffer.count = 0;
-	transient_buffer.cursor = transient_buffer.data;
+	transient_buffer.offset = 0;
 
-	if (!transient_buffer.gl_id) {
-		glGenBuffers(1, &transient_buffer.gl_id);
-		glBindBuffer(GL_ARRAY_BUFFER, transient_buffer.gl_id);
-		glBufferData(GL_ARRAY_BUFFER, TFX_TRANSIENT_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
+	if (!transient_buffer.buf.gl_id) {
+		GLuint id;
+		glGenBuffers(1, &id);
+		glBindBuffer(GL_ARRAY_BUFFER, id);
+		glBufferData(GL_ARRAY_BUFFER, TFX_TRANSIENT_BUFFER_SIZE, NULL, GL_DYNAMIC_DRAW);
+		transient_buffer.buf.gl_id = id;
 	}
 }
 
-void tfx_set_transient_buffer() {
-	//
+tfx_transient_buffer tfx_transient_buffer_new(tfx_vertex_format *fmt, uint16_t num_verts) {
+	tfx_transient_buffer buf;
+	buf.format = fmt;
+	buf.data = transient_buffer.data + transient_buffer.offset;
+	buf.num = num_verts;
+	buf.offset = transient_buffer.offset;
+	transient_buffer.offset += num_verts * fmt->stride;
+	return buf;
 }
 
-uint32_t tfx_transient_buffer_get_available() {
-	return TFX_TRANSIENT_BUFFER_SIZE - (transient_buffer.cursor - transient_buffer.data);
+uint32_t tfx_transient_buffer_get_available(tfx_vertex_format *fmt) {
+	assert(fmt->stride > 0);
+	uint32_t avail = TFX_TRANSIENT_BUFFER_SIZE;
+	avail -= transient_buffer.offset;
+	avail /= fmt->stride;
+	return avail;
 }
 
 void tfx_reset(uint16_t width, uint16_t height) {
@@ -318,7 +326,7 @@ void tfx_reset(uint16_t width, uint16_t height) {
 
 	if (!transient_buffer.data) {
 		transient_buffer.data = malloc(TFX_TRANSIENT_BUFFER_SIZE);
-		memset(transient_buffer.data, 0, TFX_TRANSIENT_BUFFER_SIZE);
+		memset(transient_buffer.data, 0xfc, TFX_TRANSIENT_BUFFER_SIZE);
 		tvb_reset();
 	}
 
@@ -333,8 +341,8 @@ void tfx_shutdown() {
 	free(transient_buffer.data);
 	transient_buffer.data = NULL;
 
-	if (transient_buffer.gl_id) {
-		glDeleteBuffers(1, &transient_buffer.gl_id);
+	if (transient_buffer.buf.gl_id) {
+		glDeleteBuffers(1, &transient_buffer.buf.gl_id);
 	}
 
 	// this can happen if you shutdown before calling frame()
@@ -790,6 +798,14 @@ void tfx_set_state(uint64_t flags) {
 	tmp_draw.flags = flags;
 }
 
+void tfx_set_transient_buffer(tfx_transient_buffer tb) {
+	assert(tb.format != NULL);
+	tmp_draw.vbo = &transient_buffer.buf;
+	tmp_draw.tvb_fmt = tb.format;
+	tmp_draw.offset = tb.offset;
+	tmp_draw.indices = tb.num;
+}
+
 void tfx_set_vertices(tfx_buffer *vbo, int count) {
 	assert(vbo != NULL);
 	assert(vbo->format);
@@ -985,9 +1001,19 @@ tfx_stats tfx_frame() {
 
 #ifdef TFX_MODERN
 	GLuint vao;
-	glGenVertexArrays(1, &vao);
-	glBindVertexArray(vao);
+	CHECK(glGenVertexArrays(1, &vao));
+	CHECK(glBindVertexArray(vao));
 #endif
+
+	if (transient_buffer.offset > 0) {
+		CHECK(glBindBuffer(GL_ARRAY_BUFFER, transient_buffer.buf.gl_id));
+		CHECK(glBufferSubData(GL_ARRAY_BUFFER, 0, transient_buffer.offset, transient_buffer.data));
+		// uint32_t floats = transient_buffer.offset / sizeof(float);
+		// for (int i = 0; i < floats; i++) {
+		// 	float *fbuf = (float*)transient_buffer.data;
+		// 	printf("%f\n", fbuf[i]);
+		// }
+	}
 
 	for (int id = 0; id < VIEW_MAX; id++) {
 		tfx_view *view = &views[id];
@@ -1085,10 +1111,10 @@ tfx_stats tfx_frame() {
 			CHECK(glDepthMask((draw.flags & TFX_STATE_DEPTH_WRITE) > 0));
 			if (caps.multisample) {
 				if (draw.flags & TFX_STATE_MSAA) {
-					glEnable(GL_MULTISAMPLE);
+					CHECK(glEnable(GL_MULTISAMPLE));
 				}
 				else {
-					glDisable(GL_MULTISAMPLE);
+					CHECK(glDisable(GL_MULTISAMPLE));
 				}
 			}
 			if (draw.flags & TFX_STATE_CULL_CW) {
@@ -1140,10 +1166,16 @@ tfx_stats tfx_frame() {
 			}
 
 			GLuint vbo = draw.vbo->gl_id;
+			assert(vbo != 0);
 
 			CHECK(glBindBuffer(GL_ARRAY_BUFFER, vbo));
 
+			if (draw.tvb_fmt) {
+				draw.vbo->format = draw.tvb_fmt;
+			}
 			tfx_vertex_format *fmt = draw.vbo->format;
+			assert(fmt != NULL);
+
 			int nc = sb_count(fmt->components);
 			int real = 0;
 			for (int i = 0; i < nc; i++) {
@@ -1187,6 +1219,9 @@ tfx_stats tfx_frame() {
 			}
 		}
 
+		sb_free(view->jobs);
+		view->jobs = NULL;
+
 		sb_free(view->draws);
 		view->draws = NULL;
 
@@ -1204,7 +1239,7 @@ tfx_stats tfx_frame() {
 	ub_cursor = uniform_buffer;
 
 #ifdef TFX_MODERN
-	glDeleteVertexArrays(1, &vao);
+	CHECK(glDeleteVertexArrays(1, &vao));
 #endif
 
 	return stats;

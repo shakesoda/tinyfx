@@ -136,6 +136,13 @@ typedef struct tfx_buffer {
 	tfx_vertex_format *format;
 } tfx_buffer;
 
+typedef struct tfx_transient_buffer {
+	tfx_vertex_format *format;
+	void *data;
+	uint16_t num;
+	uint32_t offset;
+} tfx_transient_buffer;
+
 typedef void (*tfx_draw_callback)(void);
 
 typedef struct tfx_rect {
@@ -174,6 +181,9 @@ TFX_API tfx_vertex_format tfx_vertex_format_start();
 TFX_API void tfx_vertex_format_add(tfx_vertex_format *fmt, size_t count, bool normalized, tfx_component_type type);
 TFX_API void tfx_vertex_format_end(tfx_vertex_format *fmt);
 
+TFX_API uint32_t tfx_transient_buffer_get_available(tfx_vertex_format *fmt);
+TFX_API tfx_transient_buffer tfx_transient_buffer_new(tfx_vertex_format *fmt, uint16_t num_verts);
+
 TFX_API tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tfx_buffer_usage usage);
 
 TFX_API tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, tfx_format format, uint16_t flags);
@@ -194,6 +204,7 @@ TFX_API tfx_program tfx_program_cs_new(const char *css);
 
 TFX_API tfx_uniform tfx_uniform_new(const char *name, tfx_uniform_type type, int count);
 
+TFX_API void tfx_set_transient_buffer(tfx_transient_buffer tb);
 TFX_API void tfx_set_uniform(tfx_uniform *uniform, float *data);
 TFX_API void tfx_set_callback(tfx_draw_callback cb);
 TFX_API void tfx_set_state(uint64_t flags);

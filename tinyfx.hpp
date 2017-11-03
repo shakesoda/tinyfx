@@ -29,6 +29,14 @@ namespace tfx {
 		}
 	};
 
+	template <typename T>
+	struct TransientBuffer {
+		tfx_transient_buffer tvb;
+		TransientBuffer(VertexFormat &fmt, uint16_t num) {
+			tvb = tfx_transient_buffer_new(&fmt.fmt, num);
+		}
+	};
+
 	struct Uniform {
 		tfx_uniform uniform;
 		Uniform(std::string name, tfx_uniform_type type, int count = 1) {
@@ -124,6 +132,10 @@ namespace tfx {
 	}
 	inline void set_state(uint64_t flags) {
 		tfx_set_state(flags);
+	}
+	template <typename T>
+	inline void set_transient_buffer(TransientBuffer<T> tvb) {
+		tfx_set_transient_buffer(tvb.tvb);
 	}
 	template <typename T>
 	inline void set_vertices(Buffer<T> &vbo, int count = 0) {
