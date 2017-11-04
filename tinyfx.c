@@ -1,5 +1,7 @@
 #define TFX_IMPLEMENTATION
 // #define TFX_USE_GLES31
+// #define TFX_USE_GL 32
+// #define TFX_USE_EPOXY 1
 #define TFX_DEBUG
 #include "tinyfx.h"
 
@@ -12,7 +14,11 @@
 
 #ifdef TFX_USE_GL
 #	if TFX_USE_GL >= 32
-#		include <GL/glcorearb.h>
+#		ifdef TFX_USE_EPOXY
+#			include <epoxy/gl.h>
+#		else
+#			include <GL/glcorearb.h>
+#		endif
 #		define TFX_MODERN 1
 #		if TFX_USE_GL >= 43
 #			define TFX_COMPUTE 1
@@ -186,6 +192,10 @@ static tfx_glext available_exts[] = {
 tfx_caps tfx_get_caps() {
 	tfx_caps caps;
 	memset(&caps, 0, sizeof(tfx_caps));
+
+#if defined(TFX_USE_GL) && TFX_USE_GL > 32
+	return caps;
+#endif
 
 	// TODO: GLES needs glGetString, but GL core profile needs glGetStringi
 	const char *real = (char*)CHECK(glGetString(GL_EXTENSIONS));
