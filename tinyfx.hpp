@@ -145,6 +145,9 @@ namespace tfx {
 	inline void set_indices(Buffer<T> &ibo, int count) {
 		tfx_set_indices(&ibo.buffer, count);
 	}
+	inline void submit(uint8_t id, Program &program, bool retain = false) {
+		tfx_submit(id, program.program, retain);
+	}
 	inline void submit(View &view, Program &program, bool retain = false) {
 		tfx_submit(view.id, program.program, retain);
 	}
