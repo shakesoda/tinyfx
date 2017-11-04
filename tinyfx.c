@@ -1143,6 +1143,9 @@ tfx_stats tfx_frame() {
 			for (int j = 0; j < nu; j++) {
 				tfx_uniform uniform = draw.uniforms[j];
 				GLint loc = CHECK(glGetUniformLocation(program, uniform.name));
+				if (loc < 0) {
+					continue;
+				}
 				switch (uniform.type) {
 					case TFX_UNIFORM_INT:   CHECK(glUniform1i(loc, *uniform.idata)); break;
 					case TFX_UNIFORM_FLOAT: CHECK(glUniform1f(loc, *uniform.fdata)); break;

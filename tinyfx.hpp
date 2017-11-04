@@ -39,8 +39,8 @@ namespace tfx {
 
 	struct Uniform {
 		tfx_uniform uniform;
-		Uniform(std::string name, tfx_uniform_type type, int count = 1) {
-			this->uniform = tfx_uniform_new(name.c_str(), type, count);
+		Uniform(const char *name, tfx_uniform_type type, int count = 1) {
+			this->uniform = tfx_uniform_new(name, type, count);
 		}
 	};
 
