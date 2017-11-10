@@ -84,18 +84,11 @@ void run(state_t *state) {
 	tfx_vertex_format_add(&fmt, 4, true, TFX_TYPE_FLOAT);
 	tfx_vertex_format_end(&fmt);
 
-	tfx_buffer vbo = tfx_buffer_new(verts, sizeof(verts), TFX_USAGE_STATIC, &fmt);
-
-	tfx_uniform u = tfx_uniform_new("u_texture", TFX_UNIFORM_INT, 1);
-	int uv[] = { 0 };
-	tfx_uniform_set_int(&u, uv);
+	tfx_buffer vbo = tfx_buffer_new(verts, sizeof(verts), &fmt, TFX_USAGE_STATIC);
 
 	while (!state->dead) {
 		state->dead = poll_events(state);
-		// tfx_touch(&v);
 		tfx_touch(back);
-
-		// tfx_blit(&v, &back, 0, 0, tfx_view_get_width(&back), tfx_view_get_height(&back));
 
 		tfx_set_vertices(&vbo, 3);
 		tfx_set_state(0);
