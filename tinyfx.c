@@ -828,8 +828,10 @@ void tfx_set_state(uint64_t flags) {
 void tfx_set_buffer(tfx_buffer *buf, uint8_t slot, bool write) {
 	assert(slot <= 8);
 	assert(buf != NULL);
+#ifdef TFX_COMPUTE
 	tmp_draw.ssbos[slot] = buf;
 	tmp_draw.ssbo_write[slot] = write;
+#endif
 }
 
 void tfx_set_transient_buffer(tfx_transient_buffer tb) {
