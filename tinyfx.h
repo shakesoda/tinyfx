@@ -208,20 +208,24 @@ TFX_API void tfx_view_set_scissor(uint8_t id, uint16_t x, uint16_t y, uint16_t w
 TFX_API uint16_t tfx_view_get_width(uint8_t id);
 TFX_API uint16_t tfx_view_get_height(uint8_t id);
 TFX_API void tfx_view_get_dimensions(uint8_t id, uint16_t *w, uint16_t *h);
+// TFX_API void tfx_view_set_transform(uint8_t id, float *view, float *proj_l, float *proj_r);
 
 TFX_API tfx_program tfx_program_new(const char *vss, const char *fss, const char *attribs[]);
-// TFX_API tfx_program tfx_program_cs_new(const char *css);
+TFX_API tfx_program tfx_program_cs_new(const char *css);
 
 TFX_API tfx_uniform tfx_uniform_new(const char *name, tfx_uniform_type type, int count);
 
+// TFX_API void tfx_set_transform(float *mtx, uint8_t count);
 TFX_API void tfx_set_transient_buffer(tfx_transient_buffer tb);
 TFX_API void tfx_set_uniform(tfx_uniform *uniform, float *data);
 TFX_API void tfx_set_callback(tfx_draw_callback cb);
 TFX_API void tfx_set_state(uint64_t flags);
 TFX_API void tfx_set_texture(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot);
+TFX_API void tfx_set_buffer(tfx_buffer *buf, uint8_t slot, bool write);
+// TFX_API void tfx_set_image(tfx_texture *tex, uint8_t slot, bool write);
 TFX_API void tfx_set_vertices(tfx_buffer *vbo, int count);
 TFX_API void tfx_set_indices(tfx_buffer *ibo, int count);
-// TFX_API void tfx_dispatch(uint8_t id, tfx_program program, uint32_t x, uint32_t y, uint32_t z);
+TFX_API void tfx_dispatch(uint8_t id, tfx_program program, uint32_t x, uint32_t y, uint32_t z);
 // TFX_API void tfx_submit_ordered(uint8_t id, tfx_program program, uint32_t depth, bool retain);
 TFX_API void tfx_submit(uint8_t id, tfx_program program, bool retain);
 TFX_API void tfx_touch(uint8_t id);

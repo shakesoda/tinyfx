@@ -134,7 +134,11 @@ namespace tfx {
 		tfx_set_state(flags);
 	}
 	template <typename T>
-	inline void set_transient_buffer(TransientBuffer<T> tvb) {
+	inline void set_buffer(Buffer<T> &buf, uint8_t slot, bool write = false) {
+		tfx_set_buffer(&buf.buffer, slot, write);
+	}
+	template <typename T>
+	inline void set_transient_buffer(TransientBuffer<T> &tvb) {
 		tfx_set_transient_buffer(tvb.tvb);
 	}
 	template <typename T>
@@ -145,9 +149,12 @@ namespace tfx {
 	inline void set_indices(Buffer<T> &ibo, int count) {
 		tfx_set_indices(&ibo.buffer, count);
 	}
-	// inline void dispatch(uint8_t id, Program &program, uint32_t x, uint32_t y, uint32_t z) {
-	// 	tfx_dispatch(id, program.program, x, y, z);
-	// }
+	inline void dispatch(uint8_t id, Program &program, uint32_t x, uint32_t y, uint32_t z) {
+		tfx_dispatch(id, program.program, x, y, z);
+	}
+	inline void dispatch(View &view, Program &program, uint32_t x, uint32_t y, uint32_t z) {
+		tfx_dispatch(view.id, program.program, x, y, z);
+	}
 	// inline void submit(uint8_t id, Program &program, uint32_t depth = 0, bool retain = false) {
 	// 	tfx_submit_ordered(id, program.program, depth, retain);
 	// }

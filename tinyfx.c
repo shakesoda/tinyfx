@@ -1,5 +1,5 @@
 #define TFX_IMPLEMENTATION
-// #define TFX_USE_GLES31
+// #define TFX_USE_GLES 31
 // #define TFX_USE_GL 32
 // #define TFX_USE_EPOXY 1
 #define TFX_DEBUG
@@ -27,7 +27,7 @@
 #		include <GL/gl.h>
 #	endif
 #else
-#	ifdef TFX_USE_GLES31
+#	if defined(TFX_USE_GLES) && TFX_USE_GLES >= 31
 #		include <GLES3/gl31.h>
 #		define TFX_MODERN 1
 #		define TFX_COMPUTE 1
@@ -138,6 +138,7 @@ typedef struct tfx_draw {
 	tfx_texture *textures[8];
 #ifdef TFX_COMPUTE
 	tfx_buffer *ssbos[8];
+	bool ssbo_write[8];
 #endif
 	tfx_buffer *vbo;
 	tfx_buffer *ibo;
@@ -167,6 +168,10 @@ typedef struct tfx_view {
 	float clear_depth;
 
 	tfx_rect scissor_rect;
+
+	float view[16];
+	float proj_left[16];
+	float proj_right[16];
 } tfx_view;
 
 #define TFX_VIEW_CLEAR_MASK      (TFX_VIEW_CLEAR_COLOR | TFX_VIEW_CLEAR_DEPTH)
@@ -267,8 +272,8 @@ void tfx_dump_caps() {
 	}
 
 	puts("TinyFX renderer: "
-	#ifdef TFX_USE_GLES31 // NYI
-		"GLES31"
+	#ifdef TFX_USE_GLES // NYI
+		"GLES"##TFX_USE_GLES
 	#else
 		"GLES2"
 	#endif
@@ -700,6 +705,15 @@ void tfx_set_uniform(tfx_uniform *uniform, float *data) {
 	sb_push(uniforms, *uniform);
 }
 
+void tfx_view_set_transform(uint8_t id, float *_view, float *proj_l, float *proj_r) {
+	// TODO: reserve tfx_world_to_view, tfx_view_to_screen uniforms
+	tfx_view *view = &views[id];
+	assert(view != NULL);
+	memcpy(view->view, _view, sizeof(float)*16);
+	memcpy(view->proj_left, proj_l, sizeof(float)*16);
+	memcpy(view->proj_right, proj_r, sizeof(float)*16);
+}
+
 void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas) {
 	tfx_view *view = &views[id];
 	assert(view != NULL);
@@ -809,6 +823,13 @@ void tfx_set_texture(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot) {
 
 void tfx_set_state(uint64_t flags) {
 	tmp_draw.flags = flags;
+}
+
+void tfx_set_buffer(tfx_buffer *buf, uint8_t slot, bool write) {
+	assert(slot <= 8);
+	assert(buf != NULL);
+	tmp_draw.ssbos[slot] = buf;
+	tmp_draw.ssbo_write[slot] = write;
 }
 
 void tfx_set_transient_buffer(tfx_transient_buffer tb) {
@@ -1027,11 +1048,6 @@ tfx_stats tfx_frame() {
 	if (transient_buffer.offset > 0) {
 		CHECK(glBindBuffer(GL_ARRAY_BUFFER, transient_buffer.buf.gl_id));
 		CHECK(glBufferSubData(GL_ARRAY_BUFFER, 0, transient_buffer.offset, transient_buffer.data));
-		// uint32_t floats = transient_buffer.offset / sizeof(float);
-		// for (int i = 0; i < floats; i++) {
-		// 	float *fbuf = (float*)transient_buffer.data;
-		// 	printf("%f\n", fbuf[i]);
-		// }
 	}
 
 	for (int id = 0; id < VIEW_MAX; id++) {
@@ -1047,9 +1063,23 @@ tfx_stats tfx_frame() {
 					CHECK(glUseProgram(job.program));
 					program = job.program;
 				}
-				// TODO: bind buffers as SSBO, set barriers...
-				// CHECK(glMemoryBarrier(SHADER_STORAGE_BARRIER_BIT));
-				// CHECK(glBindBufferBase(GL_SHADER_STORAGE_BUFFER, id, ssbo));
+				// TODO: bind image textures
+				for (int i = 0; i < 8; i++) {
+					if (job.textures[i] != NULL) {
+						tfx_buffer *ssbo = job.ssbos[i];
+						if (ssbo->dirty) {
+							CHECK(glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT));
+							ssbo->dirty = false;
+						}
+						if (job.ssbo_write[i]) {
+							ssbo->dirty = true;
+						}
+						CHECK(glBindBufferBase(GL_SHADER_STORAGE_BUFFER, i, job.ssbos[i]->gl_id));
+					}
+					else {
+						CHECK(glBindBufferBase(GL_SHADER_STORAGE_BUFFER, i, 0));
+					}
+				}
 				CHECK(glDispatchCompute(job.threads_x, job.threads_y, job.threads_z));
 			}
 		}
@@ -1193,7 +1223,7 @@ tfx_stats tfx_frame() {
 			GLuint vbo = draw.vbo->gl_id;
 			assert(vbo != 0);
 
-#if TFX_COMPUTE
+#ifdef TFX_COMPUTE
 			if (draw.vbo->dirty) {
 				CHECK(glMemoryBarrier(GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT));
 				draw.vbo->dirty = false;
@@ -1243,6 +1273,12 @@ tfx_stats tfx_frame() {
 			}
 
 			if (draw.ibo) {
+#ifdef TFX_COMPUTE
+				if (draw.ibo->dirty) {
+					CHECK(glMemoryBarrier(GL_ELEMENT_ARRAY_BARRIER_BIT));
+					draw.ibo->dirty = false;
+				}
+#endif
 				CHECK(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, draw.ibo->gl_id));
 				CHECK(glDrawElements(mode, draw.indices, GL_UNSIGNED_SHORT, (GLvoid*)draw.offset));
 			}
