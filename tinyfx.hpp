@@ -145,6 +145,12 @@ namespace tfx {
 	inline void set_indices(Buffer<T> &ibo, int count) {
 		tfx_set_indices(&ibo.buffer, count);
 	}
+	// inline void dispatch(uint8_t id, Program &program, uint32_t x, uint32_t y, uint32_t z) {
+	// 	tfx_dispatch(id, program.program, x, y, z);
+	// }
+	// inline void submit(uint8_t id, Program &program, uint32_t depth = 0, bool retain = false) {
+	// 	tfx_submit_ordered(id, program.program, depth, retain);
+	// }
 	inline void submit(uint8_t id, Program &program, bool retain = false) {
 		tfx_submit(id, program.program, retain);
 	}

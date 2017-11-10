@@ -136,18 +136,22 @@ typedef struct tfx_draw {
 	tfx_uniform *uniforms;
 
 	tfx_texture *textures[8];
+#ifdef TFX_COMPUTE
+	tfx_buffer *ssbos[8];
+#endif
 	tfx_buffer *vbo;
 	tfx_buffer *ibo;
 	tfx_vertex_format *tvb_fmt;
 
 	size_t offset;
 	uint16_t indices;
+	uint32_t depth;
 
 #ifdef TFX_COMPUTE
 	// for compute jobs
-	int threads_x;
-	int threads_y;
-	int threads_z;
+	uint32_t threads_x;
+	uint32_t threads_y;
+	uint32_t threads_z;
 #endif
 } tfx_draw;
 
@@ -509,7 +513,6 @@ void tfx_vertex_format_end(tfx_vertex_format *fmt) {
 }
 
 tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tfx_buffer_usage usage) {
-	GLenum target = format == NULL ? GL_ELEMENT_ARRAY_BUFFER : GL_ARRAY_BUFFER;
 	GLenum gl_usage = GL_STATIC_DRAW;
 	switch (usage) {
 		case TFX_USAGE_STATIC:  gl_usage = GL_STATIC_DRAW; break;
@@ -524,10 +527,10 @@ tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tf
 	buffer.format = format;
 
 	CHECK(glGenBuffers(1, &buffer.gl_id));
-	CHECK(glBindBuffer(target, buffer.gl_id));
+	CHECK(glBindBuffer(GL_ARRAY_BUFFER, buffer.gl_id));
 
 	if (size != 0) {
-		CHECK(glBufferData(target, size, data, gl_usage));
+		CHECK(glBufferData(GL_ARRAY_BUFFER, size, data, gl_usage));
 	}
 
 	return buffer;
@@ -910,12 +913,13 @@ static void push_uniforms(tfx_program program, tfx_draw *add_state) {
 	ts_delete(found);
 }
 
-void tfx_dispatch(uint8_t id, tfx_program program, int x, int y, int z) {
+void tfx_dispatch(uint8_t id, tfx_program program, uint32_t x, uint32_t y, uint32_t z) {
 #ifdef TFX_COMPUTE
 	tfx_view *view = &views[id];
 	tmp_draw.program = program;
 	assert(program != 0);
 	assert(view != NULL);
+	assert((x + y + z) > 0);
 
 	tfx_draw add_state;
 	memcpy(&add_state, &tmp_draw, sizeof(tfx_draw));
@@ -947,6 +951,11 @@ void tfx_submit(uint8_t id, tfx_program program, bool retain) {
 	if (!retain) {
 		reset();
 	}
+}
+
+void tfx_submit_ordered(uint8_t id, tfx_program program, uint32_t depth, bool retain) {
+	tmp_draw.depth = depth;
+	tfx_submit(id, program, retain);
 }
 
 void tfx_touch(uint8_t id) {
@@ -1038,6 +1047,9 @@ tfx_stats tfx_frame() {
 					CHECK(glUseProgram(job.program));
 					program = job.program;
 				}
+				// TODO: bind buffers as SSBO, set barriers...
+				// CHECK(glMemoryBarrier(SHADER_STORAGE_BARRIER_BIT));
+				// CHECK(glBindBufferBase(GL_SHADER_STORAGE_BUFFER, id, ssbo));
 				CHECK(glDispatchCompute(job.threads_x, job.threads_y, job.threads_z));
 			}
 		}
@@ -1180,6 +1192,13 @@ tfx_stats tfx_frame() {
 
 			GLuint vbo = draw.vbo->gl_id;
 			assert(vbo != 0);
+
+#if TFX_COMPUTE
+			if (draw.vbo->dirty) {
+				CHECK(glMemoryBarrier(GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT));
+				draw.vbo->dirty = false;
+			}
+#endif
 
 			CHECK(glBindBuffer(GL_ARRAY_BUFFER, vbo));
 

@@ -63,12 +63,21 @@ typedef enum tfx_format {
 	TFX_FORMAT_RGB565 = 0,
 	TFX_FORMAT_RGBA8,
 
+	// TFX_FORMAT_RGB10A2,
+	// TFX_FORMAT_RG11B10F,
+	// TFX_FORMAT_RGBA16F,
+
 	// color + depth
 	TFX_FORMAT_RGB565_D16,
 	TFX_FORMAT_RGBA8_D16,
 
+	// TFX_FORMAT_RGB10A2_D16,
+	// TFX_FORMAT_RG11B10F_D16,
+	// TFX_FORMAT_RGBA16F_D16,
+
 	// depth only
-	TFX_FORMAT_D16,
+	TFX_FORMAT_D16
+	// TFX_FORMAT_D24_S8
 } tfx_format;
 
 typedef unsigned tfx_program;
@@ -133,6 +142,7 @@ typedef struct tfx_vertex_format {
 
 typedef struct tfx_buffer {
 	unsigned gl_id;
+	bool dirty;
 	tfx_vertex_format *format;
 } tfx_buffer;
 
@@ -200,7 +210,7 @@ TFX_API uint16_t tfx_view_get_height(uint8_t id);
 TFX_API void tfx_view_get_dimensions(uint8_t id, uint16_t *w, uint16_t *h);
 
 TFX_API tfx_program tfx_program_new(const char *vss, const char *fss, const char *attribs[]);
-TFX_API tfx_program tfx_program_cs_new(const char *css);
+// TFX_API tfx_program tfx_program_cs_new(const char *css);
 
 TFX_API tfx_uniform tfx_uniform_new(const char *name, tfx_uniform_type type, int count);
 
@@ -211,6 +221,8 @@ TFX_API void tfx_set_state(uint64_t flags);
 TFX_API void tfx_set_texture(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot);
 TFX_API void tfx_set_vertices(tfx_buffer *vbo, int count);
 TFX_API void tfx_set_indices(tfx_buffer *ibo, int count);
+// TFX_API void tfx_dispatch(uint8_t id, tfx_program program, uint32_t x, uint32_t y, uint32_t z);
+// TFX_API void tfx_submit_ordered(uint8_t id, tfx_program program, uint32_t depth, bool retain);
 TFX_API void tfx_submit(uint8_t id, tfx_program program, bool retain);
 TFX_API void tfx_touch(uint8_t id);
 
