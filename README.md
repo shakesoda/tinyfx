@@ -34,10 +34,10 @@ why do I keep getting asked this
 
 ## Examples
 
-Hello Triangle (`tests/tinyfx_test.c`)
-![](https://github.com/shakesoda/tinyfx/raw/master/test/triangle.png)
+Hello Triangle (`examples/01-triangle.c`)
+![](https://github.com/shakesoda/tinyfx/raw/master/examples/01-triangle.png)
 
-<!-- Hello C++ (`tests/hello_cpp.cpp) -->
+<!-- Hello C++ (`examples/hello_cpp.cpp) -->
 <!-- Transient buffers -->
 <!-- Compute -->
 <!-- Shadows -->

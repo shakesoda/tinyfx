@@ -10,9 +10,9 @@ static void run(state_t *state) {
 	tfx_view_set_depth_test(back, TFX_DEPTH_TEST_LT);
 
 	const char *vss = ""
-		"attribute vec3 a_position;\n"
-		"attribute vec4 a_color;\n"
-		"varying vec4 v_col;\n"
+		"in vec3 a_position;\n"
+		"in vec4 a_color;\n"
+		"out vec4 v_col;\n"
 		"void main() {\n"
 		"	v_col = a_color;\n"
 		"	gl_Position = vec4(a_position.xyz, 1.0);\n"
@@ -20,7 +20,7 @@ static void run(state_t *state) {
 	;
 	const char *fss = ""
 		"precision mediump float;\n"
-		"varying vec4 v_col;\n"
+		"in vec4 v_col;\n"
 		"void main() {\n"
 		"	gl_FragColor = v_col;\n"
 		"}\n"
@@ -46,8 +46,7 @@ static void run(state_t *state) {
 
 	tfx_buffer vbo = tfx_buffer_new(verts, sizeof(verts), &fmt, TFX_USAGE_STATIC);
 
-	while (!state->dead) {
-		state->dead = poll_events(state);
+	while (state->alive) {
 		tfx_touch(back);
 
 		tfx_set_vertices(&vbo, 3);
@@ -55,7 +54,7 @@ static void run(state_t *state) {
 		tfx_submit(back, prog, false);
 
 		tfx_frame();
-		demo_swap_buffers();
+		demo_end_frame(state);
 	}
 
 	tfx_shutdown();

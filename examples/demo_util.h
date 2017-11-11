@@ -1,8 +1,8 @@
 #pragma once
 
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_opengl.h>
 #include <sys/signal.h>
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -13,7 +13,7 @@ void *read_file(const char *filename) {
 		fseek(f, 0L, SEEK_END);
 		int bytes = ftell(f);
 		rewind(f);
-		char *buf = malloc(bytes+1);
+		char *buf = (char*)malloc(bytes+1);
 		buf[bytes] = '\0';
 		fread(buf, 1, bytes, f);
 		fclose(f);
@@ -29,37 +29,37 @@ typedef struct state_t {
 	uint16_t height;
 	SDL_Window     *window;
 	SDL_GLContext  context;
-	int dead;
+	int alive;
 } state_t;
 
-static state_t *g_state = NULL;
-
-void demo_swap_buffers() {
-	SDL_GL_SwapWindow(g_state->window);
-}
-
-int poll_events(state_t *state) {
+static int demo_poll_events(state_t *state) {
 	SDL_Event event;
 	while (SDL_PollEvent(&event)) {
 		if (event.type == SDL_WINDOWEVENT
 			&& event.window.event == SDL_WINDOWEVENT_CLOSE
 		) {
-			return 1;
+			return 0;
 		}
 		switch (event.type) {
 			case SDL_KEYDOWN:
 				if (event.key.keysym.sym == SDLK_ESCAPE) {
-					return 1;
+					return 0;
 				}
 			default: break;
 		}
 	}
-	return 0;
+	return 1;
+}
+void demo_end_frame(state_t *state) {
+	SDL_GL_SwapWindow(state->window);
+	state->alive = demo_poll_events(state);
 }
 
+
+static state_t *g_state = NULL;
 void sigh(int signo) {
 	if (signo == SIGINT) {
-		g_state->dead = 1;
+		g_state->alive = 0;
 		puts("");
 	}
 
@@ -68,8 +68,6 @@ void sigh(int signo) {
 		SDL_Quit();
 	}
 }
-
-#include <SDL2/SDL_opengl.h>
 
 typedef void (APIENTRY *DEBUGPROC)(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, void* userParam);
 typedef void (APIENTRY *DEBUGMSG)(DEBUGPROC callback, const void* userParam);
@@ -83,6 +81,7 @@ static void debug_spew(GLenum s, GLenum t, GLuint id, GLenum sev, GLsizei len, c
 int demo_run(void (*runcb)(state_t*)) {
 	state_t state;
 	memset(&state, 0, sizeof(state_t));
+	state.alive = 1;
 
 	g_state = &state;
 

@@ -403,13 +403,42 @@ static GLuint load_shader(GLenum type, const char *shaderSrc) {
 	return shader;
 }
 
-tfx_program tfx_program_new(const char *vss, const char *fss, const char *attribs[]) {
+const char *vs_prepend = ""
+	"#if GL_ES\n"
+	"#define in attribute\n"
+	"#define out varying\n"
+	"#endif\n"
+	"#line 1\n"
+;
+const char *fs_prepend = ""
+	"#if GL_ES\n"
+	"#define in varying\n"
+	"#endif\n"
+	"#line 1\n"
+;
+
+static char *sappend(const char *left, const char *right) {
+	size_t ls = strlen(left);
+	size_t rs = strlen(right);
+	char *ss = malloc(ls+rs+1);
+	memcpy(ss, left, ls);
+	memcpy(ss+ls, right, rs);
+	ss[ls+rs] = '\0';
+	return ss;
+}
+
+tfx_program tfx_program_new(const char *_vss, const char *_fss, const char *attribs[]) {
+	char *vss = sappend(vs_prepend, _vss);
+	char *fss = sappend(fs_prepend, _fss);
+
 	GLuint vs = load_shader(GL_VERTEX_SHADER, vss);
 	GLuint fs = load_shader(GL_FRAGMENT_SHADER, fss);
 	GLuint program = CHECK(glCreateProgram());
 	if (!program) {
 		return 0;
 	}
+	free(vss);
+	free(fss);
 
 	CHECK(glAttachShader(program, vs));
 	CHECK(glAttachShader(program, fs));
