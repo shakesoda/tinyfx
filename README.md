@@ -18,7 +18,7 @@ Small OpenGL ES2+ renderer inspired by [BGFX](https://github.com/bkaradzic/bgfx)
 Anyone sick of remembering when you need barriers, implementing a state tracker for the 50th time, integrating bigger deps than your entire codebase or who just wants something less of a pain to use than OpenGL is.
 
 ### *What's wrong with BGFX?*
-BGFX is great if you need to support multiple backends (I don't) and don't mind your build breaking semi-regularly. I wanted something (much) smaller which builds quickly on RPi, has a reasonable feature set and doesn't require that you use additional tooling (i.e. `shaderc`) which is a pain for prototyping.
+BGFX is great if you need to support multiple backends (I don't) and you care to deal with keeping its dependencies synced. I wanted something (much) smaller which builds quickly on RPi, has a reasonable feature set and doesn't require that you use additional tooling which is a pain for prototyping.
 
 BGFX is faster, more mature and more featureful if you need it. It's also entirely possible to start with TinyFX and switch to BGFX later, as the APIs are (intentionally) very similar.
 
