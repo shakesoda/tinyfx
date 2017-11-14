@@ -136,7 +136,8 @@ typedef struct tfx_vertex_component {
 } tfx_vertex_component;
 
 typedef struct tfx_vertex_format {
-	tfx_vertex_component *components;
+	tfx_vertex_component components[8];
+	uint8_t count, _pad0[3];
 	size_t stride;
 } tfx_vertex_format;
 

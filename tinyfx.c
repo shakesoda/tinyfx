@@ -5,6 +5,11 @@
 #define TFX_DEBUG
 #include "tinyfx.h"
 
+#ifdef TFX_LEAK_CHECK
+#define STB_LEAKCHECK_IMPLEMENTATION
+#include "stb_leakcheck.h"
+#endif
+
 /**********************\
 | implementation stuff |
 \**********************/
@@ -285,90 +290,99 @@ void tfx_dump_caps() {
 }
 
 // uniforms updated this frame
-static tfx_uniform *uniforms = NULL;
-static uint8_t *uniform_buffer = NULL;
-static uint8_t *ub_cursor = NULL;
-
+static tfx_uniform *g_uniforms = NULL;
+static uint8_t *g_uniform_buffer = NULL;
+static uint8_t *g_ub_cursor = NULL;
 static tfx_view views[VIEW_MAX];
 
 static struct {
 	uint8_t *data;
 	uint32_t offset;
 	tfx_buffer buf;
-} transient_buffer;
+} g_transient_buffer;
 
-static tfx_caps caps;
+static tfx_caps g_caps;
 
 static void tvb_reset() {
-	transient_buffer.offset = 0;
+	g_transient_buffer.offset = 0;
 
-	if (!transient_buffer.buf.gl_id) {
+	if (!g_transient_buffer.buf.gl_id) {
 		GLuint id;
-		glGenBuffers(1, &id);
-		glBindBuffer(GL_ARRAY_BUFFER, id);
-		glBufferData(GL_ARRAY_BUFFER, TFX_TRANSIENT_BUFFER_SIZE, NULL, GL_DYNAMIC_DRAW);
-		transient_buffer.buf.gl_id = id;
+		CHECK(glGenBuffers(1, &id));
+		CHECK(glBindBuffer(GL_ARRAY_BUFFER, id));
+		CHECK(glBufferData(GL_ARRAY_BUFFER, TFX_TRANSIENT_BUFFER_SIZE, NULL, GL_DYNAMIC_DRAW));
+		g_transient_buffer.buf.gl_id = id;
 	}
 }
 
 tfx_transient_buffer tfx_transient_buffer_new(tfx_vertex_format *fmt, uint16_t num_verts) {
 	tfx_transient_buffer buf;
 	buf.format = fmt;
-	buf.data = transient_buffer.data + transient_buffer.offset;
+	buf.data = g_transient_buffer.data + g_transient_buffer.offset;
 	buf.num = num_verts;
-	buf.offset = transient_buffer.offset;
-	transient_buffer.offset += num_verts * fmt->stride;
+	buf.offset = g_transient_buffer.offset;
+	g_transient_buffer.offset += num_verts * fmt->stride;
 	return buf;
 }
 
 uint32_t tfx_transient_buffer_get_available(tfx_vertex_format *fmt) {
 	assert(fmt->stride > 0);
 	uint32_t avail = TFX_TRANSIENT_BUFFER_SIZE;
-	avail -= transient_buffer.offset;
+	avail -= g_transient_buffer.offset;
 	avail /= fmt->stride;
 	return avail;
 }
 
 void tfx_reset(uint16_t width, uint16_t height) {
-	caps = tfx_get_caps();
+	g_caps = tfx_get_caps();
 
 	memset(&backbuffer, 0, sizeof(tfx_canvas));
 	backbuffer.gl_id  = 0;
 	backbuffer.width  = width;
 	backbuffer.height = height;
 
-	if (!uniform_buffer) {
-		uniform_buffer = malloc(TFX_UNIFORM_BUFFER_SIZE);
-		memset(uniform_buffer, 0, TFX_UNIFORM_BUFFER_SIZE);
-		ub_cursor = uniform_buffer;
+	if (!g_uniform_buffer) {
+		g_uniform_buffer = malloc(TFX_UNIFORM_BUFFER_SIZE);
+		memset(g_uniform_buffer, 0, TFX_UNIFORM_BUFFER_SIZE);
+		g_ub_cursor = g_uniform_buffer;
 	}
 
-	if (!transient_buffer.data) {
-		transient_buffer.data = malloc(TFX_TRANSIENT_BUFFER_SIZE);
-		memset(transient_buffer.data, 0xfc, TFX_TRANSIENT_BUFFER_SIZE);
+	if (!g_transient_buffer.data) {
+		g_transient_buffer.data = malloc(TFX_TRANSIENT_BUFFER_SIZE);
+		memset(g_transient_buffer.data, 0xfc, TFX_TRANSIENT_BUFFER_SIZE);
 		tvb_reset();
 	}
 
 	memset(&views, 0, sizeof(tfx_view)*VIEW_MAX);
 }
 
+static tfx_program *g_programs = NULL;
+static tfx_draw tmp_draw;
+
 void tfx_shutdown() {
+	tfx_frame();
+
 	// TODO: clean up all GL objects, allocs, etc.
-	free(uniform_buffer);
-	uniform_buffer = NULL;
+	free(g_uniform_buffer);
+	g_uniform_buffer = NULL;
 
-	free(transient_buffer.data);
-	transient_buffer.data = NULL;
+	free(g_transient_buffer.data);
+	g_transient_buffer.data = NULL;
 
-	if (transient_buffer.buf.gl_id) {
-		glDeleteBuffers(1, &transient_buffer.buf.gl_id);
+	if (g_transient_buffer.buf.gl_id) {
+		glDeleteBuffers(1, &g_transient_buffer.buf.gl_id);
 	}
 
-	// this can happen if you shutdown before calling frame()
-	if (uniforms) {
-		sb_free(uniforms);
-		uniforms = NULL;
+	glUseProgram(0);
+	int np = sb_count(g_programs);
+	for (int i = 0; i < np; i++) {
+		glDeleteProgram(g_programs[i]);
 	}
+	g_programs = NULL;
+
+#ifdef TFX_LEAK_CHECK
+	stb_leakcheck_dumpmem();
+#endif
 }
 
 static bool shaderc_allocated = false;
@@ -404,16 +418,28 @@ static GLuint load_shader(GLenum type, const char *shaderSrc) {
 }
 
 const char *vs_prepend = ""
-	"#if GL_ES\n"
+	"#ifndef GL_ES\n"
+	"#define lowp\n"
+	"#define mediump\n"
+	"#define highp\n"
+	"#else\n"
+	"precision highp float;\n"
 	"#define in attribute\n"
 	"#define out varying\n"
 	"#endif\n"
+	"#pragma optionNV(strict on)\n"
 	"#line 1\n"
 ;
 const char *fs_prepend = ""
-	"#if GL_ES\n"
+	"#ifndef GL_ES\n"
+	"#define lowp\n"
+	"#define mediump\n"
+	"#define highp\n"
+	"#else\n"
+	"precision mediump float;\n"
 	"#define in varying\n"
 	"#endif\n"
+	"#pragma optionNV(strict on)\n"
 	"#line 1\n"
 ;
 
@@ -431,14 +457,31 @@ tfx_program tfx_program_new(const char *_vss, const char *_fss, const char *attr
 	char *vss = sappend(vs_prepend, _vss);
 	char *fss = sappend(fs_prepend, _fss);
 
-	GLuint vs = load_shader(GL_VERTEX_SHADER, vss);
-	GLuint fs = load_shader(GL_FRAGMENT_SHADER, fss);
+	const char *version =
+	#if defined(TFX_USE_GLES) && TFX_USE_GLES >= 31 // GLES 3.1
+	"#version 310 es\n"
+	#elif defined(TFX_USE_GL) && TFX_USE_GL >= 33 // GL 3.3
+	"#version 330\n"
+	#elif defined(TFX_USE_GL) // GL 3.0
+	"#version 130\n"
+	#else // GLES 2.0
+	"#version 100\n"
+	#endif
+	;
+	char *finalvs = sappend(version, vss);
+	char *finalfs = sappend(version, fss);
+
+	GLuint vs = load_shader(GL_VERTEX_SHADER, finalvs);
+	GLuint fs = load_shader(GL_FRAGMENT_SHADER, finalfs);
 	GLuint program = CHECK(glCreateProgram());
+
+	free(finalvs);
+	free(finalfs);
+	free(vss);
+	free(fss);
 	if (!program) {
 		return 0;
 	}
-	free(vss);
-	free(fss);
 
 	CHECK(glAttachShader(program, vs));
 	CHECK(glAttachShader(program, fs));
@@ -471,16 +514,28 @@ tfx_program tfx_program_new(const char *_vss, const char *_fss, const char *attr
 	CHECK(glDeleteShader(vs));
 	CHECK(glDeleteShader(fs));
 
+	sb_push(g_programs, program);
+
 	return program;
 }
 
 tfx_program tfx_program_cs_new(const char *css) {
-	if (!caps.compute) {
+	if (!g_caps.compute) {
 		return 0;
 	}
 
-	GLuint cs = load_shader(GL_COMPUTE_SHADER, css);
+	const char *version =
+	#if defined(TFX_USE_GL) && TFX_USE_GL >= 43
+		"#version 430"
+	#else
+		"#version 310 es"
+	#endif
+	;
+	char *final_cs = sappend(version, css);
+
+	GLuint cs = load_shader(GL_COMPUTE_SHADER, final_cs);
 	GLuint program = CHECK(glCreateProgram());
+	free(final_cs);
 	if (!program) {
 		return 0;
 	}
@@ -503,6 +558,8 @@ tfx_program tfx_program_cs_new(const char *css) {
 	}
 	CHECK(glDeleteShader(cs));
 
+	sb_push(g_programs, program);
+
 	return program;
 }
 
@@ -514,20 +571,18 @@ tfx_vertex_format tfx_vertex_format_start() {
 }
 
 void tfx_vertex_format_add(tfx_vertex_format *fmt, size_t count, bool normalized, tfx_component_type type) {
-	tfx_vertex_component component;
-	memset(&component, 0, sizeof(tfx_vertex_component));
-
-	component.offset = 0;
-	component.size = count;
-	component.normalized = normalized;
-	component.type = type;
-
-	sb_push(fmt->components, component);
+	tfx_vertex_component *component = &fmt->components[fmt->count];
+	memset(component, 0, sizeof(tfx_vertex_component));
+	component->offset = 0;
+	component->size = count;
+	component->normalized = normalized;
+	component->type = type;
+	fmt->count += 1;
 }
 
 void tfx_vertex_format_end(tfx_vertex_format *fmt) {
 	size_t stride = 0;
-	int nc = sb_count(fmt->components);
+	int nc = fmt->count;
 	for (int i = 0; i < nc; i++) {
 		tfx_vertex_component *vc = &fmt->components[i];
 		size_t bytes = 0;
@@ -727,11 +782,11 @@ tfx_uniform tfx_uniform_new(const char *name, tfx_uniform_type type, int count) 
 }
 
 void tfx_set_uniform(tfx_uniform *uniform, float *data) {
-	uniform->data = ub_cursor;
+	uniform->data = g_ub_cursor;
 	memcpy(uniform->fdata, data, uniform->size);
-	ub_cursor += uniform->size;
+	g_ub_cursor += uniform->size;
 
-	sb_push(uniforms, *uniform);
+	sb_push(g_uniforms, *uniform);
 }
 
 void tfx_view_set_transform(uint8_t id, float *_view, float *proj_l, float *proj_r) {
@@ -826,8 +881,6 @@ void tfx_view_set_scissor(uint8_t id, uint16_t x, uint16_t y, uint16_t w, uint16
 	view->scissor_rect = rect;
 }
 
-static tfx_draw tmp_draw;
-
 static void reset() {
 	memset(&tmp_draw, 0, sizeof(tfx_draw));
 }
@@ -841,11 +894,11 @@ void tfx_set_texture(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot) {
 	assert(uniform != NULL);
 	assert(uniform->count == 1);
 
-	uniform->data = ub_cursor;
+	uniform->data = g_ub_cursor;
 	uniform->idata[0] = slot;
-	ub_cursor += uniform->size;
+	g_ub_cursor += uniform->size;
 
-	sb_push(uniforms, *uniform);
+	sb_push(g_uniforms, *uniform);
 
 	tmp_draw.textures[slot] = tex;
 }
@@ -865,7 +918,7 @@ void tfx_set_buffer(tfx_buffer *buf, uint8_t slot, bool write) {
 
 void tfx_set_transient_buffer(tfx_transient_buffer tb) {
 	assert(tb.format != NULL);
-	tmp_draw.vbo = &transient_buffer.buf;
+	tmp_draw.vbo = &g_transient_buffer.buf;
 	tmp_draw.tvb_fmt = tb.format;
 	tmp_draw.offset = tb.offset;
 	tmp_draw.indices = tb.num;
@@ -935,6 +988,7 @@ void ts_delete(nlist **hashtab) {
 			free(hashtab[i]);
 		}
 	}
+	free(hashtab);
 }
 
 static void push_uniforms(tfx_program program, tfx_draw *add_state) {
@@ -942,9 +996,9 @@ static void push_uniforms(tfx_program program, tfx_draw *add_state) {
 
 	// TODO: this entire thing could probably be much faster.
 	// TODO: look into caching uniform locations. never trust GL.
-	int n = sb_count(uniforms);
+	int n = sb_count(g_uniforms);
 	for (int i = n-1; i >= 0; i--) {
-		tfx_uniform uniform = uniforms[i];
+		tfx_uniform uniform = g_uniforms[i];
 		GLuint loc = CHECK(glGetUniformLocation(program, uniform.name));
 		if (loc >= 0) {
 			// only record the last update for a given uniform
@@ -952,9 +1006,9 @@ static void push_uniforms(tfx_program program, tfx_draw *add_state) {
 				tfx_uniform found_uniform;
 				memcpy(&found_uniform, &uniform, sizeof(tfx_uniform));
 
-				found_uniform.data = ub_cursor;
+				found_uniform.data = g_ub_cursor;
 				memcpy(found_uniform.data, uniform.data, uniform.size);
-				ub_cursor += uniform.size;
+				g_ub_cursor += uniform.size;
 
 				ts_set(found, uniform.name);
 				sb_push(add_state->uniforms, found_uniform);
@@ -1076,9 +1130,9 @@ tfx_stats tfx_frame() {
 	CHECK(glBindVertexArray(vao));
 #endif
 
-	if (transient_buffer.offset > 0) {
-		CHECK(glBindBuffer(GL_ARRAY_BUFFER, transient_buffer.buf.gl_id));
-		CHECK(glBufferSubData(GL_ARRAY_BUFFER, 0, transient_buffer.offset, transient_buffer.data));
+	if (g_transient_buffer.offset > 0) {
+		CHECK(glBindBuffer(GL_ARRAY_BUFFER, g_transient_buffer.buf.gl_id));
+		CHECK(glBufferSubData(GL_ARRAY_BUFFER, 0, g_transient_buffer.offset, g_transient_buffer.data));
 	}
 
 	for (int id = 0; id < VIEW_MAX; id++) {
@@ -1086,7 +1140,7 @@ tfx_stats tfx_frame() {
 
 		GLuint program = 0;
 #ifdef TFX_COMPUTE
-		if (caps.compute) {
+		if (g_caps.compute) {
 			int cd = sb_count(view->jobs);
 			for (int i = 0; i < cd; i++) {
 				tfx_draw job = view->draws[i];
@@ -1192,7 +1246,7 @@ tfx_stats tfx_frame() {
 				program = draw.program;
 			}
 			CHECK(glDepthMask((draw.flags & TFX_STATE_DEPTH_WRITE) > 0));
-			if (caps.multisample) {
+			if (g_caps.multisample) {
 				if (draw.flags & TFX_STATE_MSAA) {
 					CHECK(glEnable(GL_MULTISAMPLE));
 				}
@@ -1269,7 +1323,7 @@ tfx_stats tfx_frame() {
 			tfx_vertex_format *fmt = draw.vbo->format;
 			assert(fmt != NULL);
 
-			int nc = sb_count(fmt->components);
+			int nc = fmt->count;
 			int real = 0;
 			for (int i = 0; i < nc; i++) {
 				tfx_vertex_component vc = fmt->components[i];
@@ -1316,6 +1370,8 @@ tfx_stats tfx_frame() {
 			else {
 				CHECK(glDrawArrays(mode, draw.offset, draw.indices));
 			}
+
+			sb_free(draw.uniforms);
 		}
 
 		sb_free(view->jobs);
@@ -1332,10 +1388,10 @@ tfx_stats tfx_frame() {
 
 	tvb_reset();
 
-	sb_free(uniforms);
-	uniforms = NULL;
+	sb_free(g_uniforms);
+	g_uniforms = NULL;
 
-	ub_cursor = uniform_buffer;
+	g_ub_cursor = g_uniform_buffer;
 
 #ifdef TFX_MODERN
 	CHECK(glDeleteVertexArrays(1, &vao));
