@@ -23,6 +23,9 @@ typedef enum tfx_depth_test {
 	TFX_DEPTH_TEST_GT
 } tfx_depth_test;
 
+#define TFX_INVALID_BUFFER tfx_buffer { 0 }
+#define TFX_INVALID_TRANSIENT_BUFFER tfx_transient_buffer { 0 }
+
 // draw state
 enum {
 	// cull modes
@@ -31,25 +34,29 @@ enum {
 
 	// depth write
 	TFX_STATE_DEPTH_WRITE = 1 << 2,
+	TFX_STATE_RGB_WRITE   = 1 << 3,
+	TFX_STATE_ALPHA_WRITE = 1 << 4,
 
 	// blending
-	TFX_STATE_BLEND_ALPHA = 1 << 3,
+	TFX_STATE_BLEND_ALPHA = 1 << 5,
 
 	// primitive modes
-	TFX_STATE_DRAW_POINTS     = 1 << 4,
-	TFX_STATE_DRAW_LINES      = 1 << 5,
-	TFX_STATE_DRAW_LINE_STRIP = 1 << 6,
-	TFX_STATE_DRAW_LINE_LOOP  = 1 << 7,
-	TFX_STATE_DRAW_TRI_STRIP  = 1 << 8,
-	TFX_STATE_DRAW_TRI_FAN    = 1 << 9,
+	TFX_STATE_DRAW_POINTS     = 1 << 6,
+	TFX_STATE_DRAW_LINES      = 1 << 7,
+	TFX_STATE_DRAW_LINE_STRIP = 1 << 8,
+	TFX_STATE_DRAW_LINE_LOOP  = 1 << 9,
+	TFX_STATE_DRAW_TRI_STRIP  = 1 << 10,
+	TFX_STATE_DRAW_TRI_FAN    = 1 << 11,
 
 	// misc state
-	TFX_STATE_MSAA            = 1 << 10,
+	TFX_STATE_MSAA            = 1 << 12,
 
 	TFX_STATE_DEFAULT = 0
 		| TFX_STATE_CULL_CCW
 		| TFX_STATE_MSAA
 		| TFX_STATE_DEPTH_WRITE
+		| TFX_STATE_RGB_WRITE
+		| TFX_STATE_ALPHA_WRITE
 		| TFX_STATE_BLEND_ALPHA
 };
 
@@ -92,6 +99,10 @@ typedef enum tfx_uniform_type {
 	TFX_UNIFORM_MAT3,
 	TFX_UNIFORM_MAT4
 } tfx_uniform_type;
+
+typedef struct tfx_platform_data {
+	void* (*gl_get_proc_address)(const char*);
+} tfx_platform_data;
 
 typedef struct tfx_uniform {
 	union {
@@ -136,7 +147,7 @@ typedef struct tfx_vertex_component {
 } tfx_vertex_component;
 
 typedef struct tfx_vertex_format {
-	tfx_vertex_component *components;
+	tfx_vertex_component components[8];
 	size_t stride;
 } tfx_vertex_format;
 
@@ -182,14 +193,17 @@ typedef struct tfx_caps {
 // #define TFX_API __attribute__ ((visibility("default")))
 #define TFX_API
 
+TFX_API void tfx_set_platform_data(tfx_platform_data pd);
+
 TFX_API tfx_caps tfx_get_caps();
 TFX_API void tfx_dump_caps();
 TFX_API void tfx_reset(uint16_t width, uint16_t height);
 TFX_API void tfx_shutdown();
 
 TFX_API tfx_vertex_format tfx_vertex_format_start();
-TFX_API void tfx_vertex_format_add(tfx_vertex_format *fmt, size_t count, bool normalized, tfx_component_type type);
+TFX_API void tfx_vertex_format_add(tfx_vertex_format *fmt, uint8_t slot, size_t count, bool normalized, tfx_component_type type);
 TFX_API void tfx_vertex_format_end(tfx_vertex_format *fmt);
+TFX_API size_t tfx_vertex_format_offset(tfx_vertex_format *fmt, uint8_t slot);
 
 TFX_API uint32_t tfx_transient_buffer_get_available(tfx_vertex_format *fmt);
 TFX_API tfx_transient_buffer tfx_transient_buffer_new(tfx_vertex_format *fmt, uint16_t num_verts);
@@ -220,6 +234,7 @@ TFX_API void tfx_set_transient_buffer(tfx_transient_buffer tb);
 TFX_API void tfx_set_uniform(tfx_uniform *uniform, float *data);
 TFX_API void tfx_set_callback(tfx_draw_callback cb);
 TFX_API void tfx_set_state(uint64_t flags);
+TFX_API void tfx_set_scissor(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
 TFX_API void tfx_set_texture(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot);
 TFX_API void tfx_set_buffer(tfx_buffer *buf, uint8_t slot, bool write);
 // TFX_API void tfx_set_image(tfx_texture *tex, uint8_t slot, bool write);

@@ -11,36 +11,10 @@
 #ifdef TFX_IMPLEMENTATION
 
 // TODO: grab function pointers at runtime...
-
-#ifdef TFX_USE_GL
-#	if TFX_USE_GL >= 32
-#		ifdef TFX_USE_EPOXY
-#			include <epoxy/gl.h>
-#		else
-#			include <GL/glcorearb.h>
-#		endif
-#		define TFX_MODERN 1
-#		if TFX_USE_GL >= 43
-#			define TFX_COMPUTE 1
-#		endif
-#	else
-#		include <GL/gl.h>
-#	endif
-#else
-#	if defined(TFX_USE_GLES) && TFX_USE_GLES >= 31
-#		include <GLES3/gl31.h>
-#		define TFX_MODERN 1
-#		define TFX_COMPUTE 1
-#	else
-#		include <GLES2/gl2.h>
-#	endif
-#	ifndef GL_MULTISAMPLE
-#		define GL_MULTISAMPLE 0x809D
-#	endif
-#	ifndef GL_COMPUTE_SHADER
-#		define GL_COMPUTE_SHADER 0x91B9
-#	endif
-#endif
+// TODO: restore support for GL < 4.3
+#include <GL/glcorearb.h>
+#define TFX_MODERN 1
+#define TFX_COMPUTE 1
 
 #include <string.h>
 #include <stdio.h>
@@ -62,6 +36,9 @@
 
 // The following code is public domain, from https://github.com/nothings/stb
 //////////////////////////////////////////////////////////////////////////////
+#ifdef __cplusplus
+#define STB_STRETCHY_BUFFER_CPP
+#endif
 #ifndef STB_STRETCHY_BUFFER_H_INCLUDED
 #define STB_STRETCHY_BUFFER_H_INCLUDED
 
@@ -73,44 +50,53 @@
 #define sb_last   stb_sb_last
 #endif
 
-#define stb_sb_free(a)         ((a) ? free(stb__sbraw(a)),0 : 0)
-#define stb_sb_push(a,v)       (stb__sbmaybegrow(a,1), (a)[stb__sbn(a)++] = (v))
-#define stb_sb_count(a)        ((a) ? stb__sbn(a) : 0)
-#define stb_sb_add(a,n)        (stb__sbmaybegrow(a,n), stb__sbn(a)+=(n), &(a)[stb__sbn(a)-(n)])
-#define stb_sb_last(a)         ((a)[stb__sbn(a)-1])
+#ifdef  STB_STRETCHY_BUFFER_CPP
+#define stb_sb_push(t,a,v)      (stb__sbmaybegrow(t,a,1), (a)[stb__sbn(a)++] = (v))
+#define stb_sb_add(t,a,n)       (stb__sbmaybegrow(t,a,n), stb__sbn(a)+=(n), &(a)[stb__sbn(a)-(n)])
+#define stb__sbmaybegrow(t,a,n) (stb__sbneedgrow(a,(n)) ? stb__sbgrow(t,a,n) : 0)
+#define stb__sbgrow(t,a,n)      ((a) = (t*)stb__sbgrowf((void*)(a), (n), sizeof(t)))
+#else
+#define stb_sb_push(a,v)        (stb__sbmaybegrow(a,1), (a)[stb__sbn(a)++] = (v))
+#define stb_sb_add(a,n)         (stb__sbmaybegrow(a,n), stb__sbn(a)+=(n), &(a)[stb__sbn(a)-(n)])
+#define stb__sbmaybegrow(a,n)   (stb__sbneedgrow(a,(n)) ? stb__sbgrow(a,n) : 0)
+#define stb__sbgrow(a,n)        ((a) = stb__sbgrowf((a), (n), sizeof(*(a))))
+#endif
+
+#define stb_sb_free(a)          ((a) ? free(stb__sbraw(a)),0 : 0)
+#define stb_sb_count(a)         ((a) ? stb__sbn(a) : 0)
+#define stb_sb_last(a)          ((a)[stb__sbn(a)-1])
 
 #define stb__sbraw(a) ((int *) (a) - 2)
 #define stb__sbm(a)   stb__sbraw(a)[0]
 #define stb__sbn(a)   stb__sbraw(a)[1]
 
 #define stb__sbneedgrow(a,n)  ((a)==0 || stb__sbn(a)+(n) >= stb__sbm(a))
-#define stb__sbmaybegrow(a,n) (stb__sbneedgrow(a,(n)) ? stb__sbgrow(a,n) : 0)
-#define stb__sbgrow(a,n)      ((a) = stb__sbgrowf((a), (n), sizeof(*(a))))
 
 #include <stdlib.h>
 
 static void * stb__sbgrowf(void *arr, int increment, int itemsize)
 {
-	int dbl_cur = arr ? 2*stb__sbm(arr) : 0;
+	int dbl_cur = arr ? 2 * stb__sbm(arr) : 0;
 	int min_needed = stb_sb_count(arr) + increment;
 	int m = dbl_cur > min_needed ? dbl_cur : min_needed;
-	int *p = (int *) realloc(arr ? stb__sbraw(arr) : 0, itemsize * m + sizeof(int)*2);
+	int *p = (int *)realloc(arr ? stb__sbraw(arr) : 0, itemsize * m + sizeof(int) * 2);
 	if (p) {
 		if (!arr)
 			p[1] = 0;
 		p[0] = m;
-		return p+2;
-	} else {
-		#ifdef STRETCHY_BUFFER_OUT_OF_MEMORY
-		STRETCHY_BUFFER_OUT_OF_MEMORY ;
-		#endif
-		return (void *) (2*sizeof(int)); // try to force a NULL pointer exception later
+		return p + 2;
+	}
+	else {
+#ifdef STRETCHY_BUFFER_OUT_OF_MEMORY
+		STRETCHY_BUFFER_OUT_OF_MEMORY;
+#endif
+		return (void *)(2 * sizeof(int)); // try to force a NULL pointer exception later
 	}
 }
 #endif // STB_STRETCHY_BUFFER_H_INCLUDED
 //////////////////////////////////////////////////////////////////////////////
 
-#define CHECK(fn) fn; { GLenum _status; while ((_status = glGetError())) { if (_status == GL_NO_ERROR) break; printf("%s:%d GL ERROR: %d\n", __FILE__, __LINE__, _status); } }
+#define CHECK(fn) fn; { GLenum _status; while ((_status = tfx_glGetError())) { if (_status == GL_NO_ERROR) break; printf("%s:%d GL ERROR: %d\n", __FILE__, __LINE__, _status); } }
 
 #define VIEW_MAX 256
 
@@ -130,11 +116,12 @@ enum {
 
 typedef struct tfx_draw {
 	tfx_draw_callback callback;
-	uint32_t flags;
+	uint64_t flags;
 
 	tfx_program program;
 	tfx_uniform *uniforms;
 
+	// TODO: remove indirection
 	tfx_texture *textures[8];
 #ifdef TFX_COMPUTE
 	tfx_buffer *ssbos[8];
@@ -143,6 +130,9 @@ typedef struct tfx_draw {
 	tfx_buffer *vbo;
 	tfx_buffer *ibo;
 	tfx_vertex_format *tvb_fmt;
+
+	tfx_rect scissor_rect;
+	bool use_scissor;
 
 	size_t offset;
 	uint16_t indices;
@@ -198,42 +188,199 @@ static tfx_glext available_exts[] = {
 	{ NULL, false }
 };
 
+#define TFX_HELLA_DIY
+#ifdef TFX_HELLA_DIY
+PFNGLGETSTRINGPROC tfx_glGetString;
+PFNGLGETERRORPROC tfx_glGetError;
+PFNGLBLENDFUNCPROC tfx_glBlendFunc;
+PFNGLCOLORMASKPROC tfx_glColorMask;
+PFNGLGETINTEGERVPROC tfx_glGetIntegerv;
+PFNGLGENBUFFERSPROC tfx_glGenBuffers;
+PFNGLBINDBUFFERPROC tfx_glBindBuffer;
+PFNGLBUFFERDATAPROC tfx_glBufferData;
+PFNGLDELETEBUFFERSPROC tfx_glDeleteBuffers;
+PFNGLCREATESHADERPROC tfx_glCreateShader;
+PFNGLSHADERSOURCEPROC tfx_glShaderSource;
+PFNGLCOMPILESHADERPROC tfx_glCompileShader;
+PFNGLGETSHADERIVPROC tfx_glGetShaderiv;
+PFNGLGETSHADERINFOLOGPROC tfx_glGetShaderInfoLog;
+PFNGLDELETESHADERPROC tfx_glDeleteShader;
+PFNGLCREATEPROGRAMPROC tfx_glCreateProgram;
+PFNGLATTACHSHADERPROC tfx_glAttachShader;
+PFNGLBINDATTRIBLOCATIONPROC tfx_glBindAttribLocation;
+PFNGLLINKPROGRAMPROC tfx_glLinkProgram;
+PFNGLGETPROGRAMIVPROC tfx_glGetProgramiv;
+PFNGLGETPROGRAMINFOLOGPROC tfx_glGetProgramInfoLog;
+PFNGLDELETEPROGRAMPROC tfx_glDeleteProgram;
+PFNGLGENTEXTURESPROC tfx_glGenTextures;
+PFNGLBINDTEXTUREPROC tfx_glBindTexture;
+PFNGLTEXPARAMETERIPROC tfx_glTexParameteri;
+PFNGLPIXELSTOREIPROC tfx_glPixelStorei;
+PFNGLTEXIMAGE2DPROC tfx_glTexImage2D;
+PFNGLGENERATEMIPMAPPROC tfx_glGenerateMipmap;
+PFNGLGENFRAMEBUFFERSPROC tfx_glGenFramebuffers;
+PFNGLBINDFRAMEBUFFERPROC tfx_glBindFramebuffer;
+PFNGLFRAMEBUFFERTEXTURE2DPROC tfx_glFramebufferTexture2D;
+PFNGLGENRENDERBUFFERSPROC tfx_glGenRenderbuffers;
+PFNGLBINDRENDERBUFFERPROC tfx_glBindRenderbuffer;
+PFNGLRENDERBUFFERSTORAGEPROC tfx_glRenderbufferStorage;
+PFNGLFRAMEBUFFERRENDERBUFFERPROC tfx_glFramebufferRenderbuffer;
+PFNGLCHECKFRAMEBUFFERSTATUSPROC tfx_glCheckFramebufferStatus;
+PFNGLGETUNIFORMLOCATIONPROC tfx_glGetUniformLocation;
+PFNGLRELEASESHADERCOMPILERPROC tfx_glReleaseShaderCompiler;
+PFNGLGENVERTEXARRAYSPROC tfx_glGenVertexArrays;
+PFNGLBINDVERTEXARRAYPROC tfx_glBindVertexArray;
+PFNGLMAPBUFFERRANGEPROC tfx_glMapBufferRange;
+PFNGLBUFFERSUBDATAPROC tfx_glBufferSubData;
+PFNGLUNMAPBUFFERPROC tfx_glUnmapBuffer;
+PFNGLUSEPROGRAMPROC tfx_glUseProgram;
+PFNGLMEMORYBARRIERPROC tfx_glMemoryBarrier;
+PFNGLBINDBUFFERBASEPROC tfx_glBindBufferBase;
+PFNGLDISPATCHCOMPUTEPROC tfx_glDispatchCompute;
+PFNGLVIEWPORTPROC tfx_glViewport;
+PFNGLSCISSORPROC tfx_glScissor;
+PFNGLCLEARCOLORPROC tfx_glClearColor;
+PFNGLCLEARDEPTHFPROC tfx_glClearDepthf;
+PFNGLCLEARPROC tfx_glClear;
+PFNGLENABLEPROC tfx_glEnable;
+PFNGLDEPTHFUNCPROC tfx_glDepthFunc;
+PFNGLDISABLEPROC tfx_glDisable;
+PFNGLDEPTHMASKPROC tfx_glDepthMask;
+PFNGLFRONTFACEPROC tfx_glFrontFace;
+PFNGLUNIFORM1IPROC tfx_glUniform1i;
+PFNGLUNIFORM1FPROC tfx_glUniform1f;
+PFNGLUNIFORM2FVPROC tfx_glUniform2fv;
+PFNGLUNIFORM3FVPROC tfx_glUniform3fv;
+PFNGLUNIFORM4FVPROC tfx_glUniform4fv;
+PFNGLUNIFORMMATRIX2FVPROC tfx_glUniformMatrix2fv;
+PFNGLUNIFORMMATRIX3FVPROC tfx_glUniformMatrix3fv;
+PFNGLUNIFORMMATRIX4FVPROC tfx_glUniformMatrix4fv;
+PFNGLENABLEVERTEXATTRIBARRAYPROC tfx_glEnableVertexAttribArray;
+PFNGLVERTEXATTRIBPOINTERPROC tfx_glVertexAttribPointer;
+PFNGLDISABLEVERTEXATTRIBARRAYPROC tfx_glDisableVertexAttribArray;
+PFNGLACTIVETEXTUREPROC tfx_glActiveTexture;
+PFNGLDRAWELEMENTSINSTANCEDPROC tfx_glDrawElementsInstanced;
+PFNGLDRAWARRAYSINSTANCEDPROC tfx_glDrawArraysInstanced;
+PFNGLDELETEVERTEXARRAYSPROC tfx_glDeleteVertexArrays;
+
+void load_em_up(void* (*get_proc_address)(const char*)) {
+	tfx_glGetString = get_proc_address("glGetString");
+	tfx_glGetError = get_proc_address("glGetError");
+	tfx_glBlendFunc = get_proc_address("glBlendFunc");
+	tfx_glColorMask = get_proc_address("glColorMask");
+	tfx_glGetIntegerv = get_proc_address("glGetIntegerv");
+	tfx_glGenBuffers = get_proc_address("glGenBuffers");
+	tfx_glBindBuffer = get_proc_address("glBindBuffer");
+	tfx_glBufferData = get_proc_address("glBufferData");
+	tfx_glDeleteBuffers = get_proc_address("glDeleteBuffers");
+	tfx_glCreateShader = get_proc_address("glCreateShader");
+	tfx_glShaderSource = get_proc_address("glShaderSource");
+	tfx_glCompileShader = get_proc_address("glCompileShader");
+	tfx_glGetShaderiv = get_proc_address("glGetShaderiv");
+	tfx_glGetShaderInfoLog = get_proc_address("glGetShaderInfoLog");
+	tfx_glDeleteShader = get_proc_address("glDeleteShader");
+	tfx_glCreateProgram = get_proc_address("glCreateProgram");
+	tfx_glAttachShader = get_proc_address("glAttachShader");
+	tfx_glBindAttribLocation = get_proc_address("glBindAttribLocation");
+	tfx_glLinkProgram = get_proc_address("glLinkProgram");
+	tfx_glGetProgramiv = get_proc_address("glGetProgramiv");
+	tfx_glGetProgramInfoLog = get_proc_address("glGetProgramInfoLog");
+	tfx_glDeleteProgram = get_proc_address("glDeleteProgram");
+	tfx_glGenTextures = get_proc_address("glGenTextures");
+	tfx_glBindTexture = get_proc_address("glBindTexture");
+	tfx_glTexParameteri = get_proc_address("glTexParameteri");
+	tfx_glPixelStorei = get_proc_address("glPixelStorei");
+	tfx_glTexImage2D = get_proc_address("glTexImage2D");
+	tfx_glGenerateMipmap = get_proc_address("glGenerateMipmap");
+	tfx_glGenFramebuffers = get_proc_address("glGenFramebuffers");
+	tfx_glBindFramebuffer = get_proc_address("glBindFramebuffer");
+	tfx_glFramebufferTexture2D = get_proc_address("glFramebufferTexture2D");
+	tfx_glGenRenderbuffers = get_proc_address("glGenRenderbuffers");
+	tfx_glBindRenderbuffer = get_proc_address("glBindRenderbuffer");
+	tfx_glRenderbufferStorage = get_proc_address("glRenderbufferStorage");
+	tfx_glFramebufferRenderbuffer = get_proc_address("glFramebufferRenderbuffer");
+	tfx_glCheckFramebufferStatus = get_proc_address("glCheckFramebufferStatus");
+	tfx_glGetUniformLocation = get_proc_address("glGetUniformLocation");
+	tfx_glReleaseShaderCompiler = get_proc_address("glReleaseShaderCompiler");
+	tfx_glGenVertexArrays = get_proc_address("glGenVertexArrays");
+	tfx_glBindVertexArray = get_proc_address("glBindVertexArray");
+	tfx_glMapBufferRange = get_proc_address("glMapBufferRange");
+	tfx_glBufferSubData = get_proc_address("glBufferSubData");
+	tfx_glUnmapBuffer = get_proc_address("glUnmapBuffer");
+	tfx_glUseProgram = get_proc_address("glUseProgram");
+	tfx_glMemoryBarrier = get_proc_address("glMemoryBarrier");
+	tfx_glBindBufferBase = get_proc_address("glBindBufferBase");
+	tfx_glDispatchCompute = get_proc_address("glDispatchCompute");
+	tfx_glViewport = get_proc_address("glViewport");
+	tfx_glScissor = get_proc_address("glScissor");
+	tfx_glClearColor = get_proc_address("glClearColor");
+	tfx_glClearDepthf = get_proc_address("glClearDepthf");
+	tfx_glClear = get_proc_address("glClear");
+	tfx_glEnable = get_proc_address("glEnable");
+	tfx_glDepthFunc = get_proc_address("glDepthFunc");
+	tfx_glDisable = get_proc_address("glDisable");
+	tfx_glDepthMask = get_proc_address("glDepthMask");
+	tfx_glFrontFace = get_proc_address("glFrontFace");
+	tfx_glUniform1i = get_proc_address("glUniform1i");
+	tfx_glUniform1f = get_proc_address("glUniform1f");
+	tfx_glUniform2fv = get_proc_address("glUniform2fv");
+	tfx_glUniform3fv = get_proc_address("glUniform3fv");
+	tfx_glUniform4fv = get_proc_address("glUniform4fv");
+	tfx_glUniformMatrix2fv = get_proc_address("glUniformMatrix2fv");
+	tfx_glUniformMatrix3fv = get_proc_address("glUniformMatrix3fv");
+	tfx_glUniformMatrix4fv = get_proc_address("glUniformMatrix4fv");
+	tfx_glEnableVertexAttribArray = get_proc_address("glEnableVertexAttribArray");
+	tfx_glVertexAttribPointer = get_proc_address("glVertexAttribPointer");
+	tfx_glDisableVertexAttribArray = get_proc_address("glDisableVertexAttribArray");
+	tfx_glActiveTexture = get_proc_address("glActiveTexture");
+	tfx_glDrawElementsInstanced = get_proc_address("glDrawElementsInstanced");
+	tfx_glDrawArraysInstanced = get_proc_address("glDrawArraysInstanced");
+	tfx_glDeleteVertexArrays = get_proc_address("glDeleteVertexArrays");
+}
+
+#endif
+
 tfx_caps tfx_get_caps() {
 	tfx_caps caps;
 	memset(&caps, 0, sizeof(tfx_caps));
 
-#if defined(TFX_USE_GL) && TFX_USE_GL > 32
+	// TODO: GL core needs glGetStringi
+#if defined(TFX_MODERN)
+	caps.compute = true;
+	caps.float_canvas = true;
+	caps.multisample = true;
 	return caps;
 #endif
 
-	// TODO: GLES needs glGetString, but GL core profile needs glGetStringi
-	const char *real = (char*)CHECK(glGetString(GL_EXTENSIONS));
-	char *exts = strdup(real);
-	char *pch = strtok(exts, " ");
-	int len = 0;
-	const char **supported = NULL;
-	while (pch != NULL) {
-		sb_push(supported, pch);
-		pch = strtok(NULL, " ");
-		len++;
-	}
+	if (tfx_glGetString) {
+		const char *real = (char*)CHECK(tfx_glGetString(GL_EXTENSIONS));
+		char *exts = strdup(real);
+		char *pch = strtok(exts, " ");
+		int len = 0;
+		const char **supported = NULL;
+		while (pch != NULL) {
+			sb_push(supported, pch);
+			pch = strtok(NULL, " ");
+			len++;
+		}
 
-	int n = sb_count(supported);
-	for (int i = 0; i < n; i++) {
-		const char *search = supported[i];
+		int n = sb_count(supported);
+		for (int i = 0; i < n; i++) {
+			const char *search = supported[i];
 
-		for (int j = 0; ; j++) {
-			tfx_glext *tmp = &available_exts[j];
-			if (!tmp->ext) {
-				break;
-			}
-			if (strcmp(tmp->ext, search) == 0) {
-				tmp->supported = true;
-				break;
+			for (int j = 0; ; j++) {
+				tfx_glext *tmp = &available_exts[j];
+				if (!tmp->ext) {
+					break;
+				}
+				if (strcmp(tmp->ext, search) == 0) {
+					tmp->supported = true;
+					break;
+				}
 			}
 		}
+		sb_free(supported);
 	}
-	sb_free(supported);
 
 	caps.multisample = available_exts[0].supported;
 #ifdef TFX_COMPUTE
@@ -254,12 +401,12 @@ void tfx_dump_caps() {
 	// I am told by the docs that this can be 0.
 	// It's not on the RPi, but since it's only a few lines of code...
 	int release_shader_c = 0;
-	glGetIntegerv(GL_SHADER_COMPILER, &release_shader_c);
+	tfx_glGetIntegerv(GL_SHADER_COMPILER, &release_shader_c);
 	printf("GL shader compiler control: %d\n", release_shader_c);
-	printf("GL vendor: %s\n", glGetString(GL_VENDOR));
-	printf("GL version: %s\n", glGetString(GL_VERSION));
+	printf("GL vendor: %s\n", tfx_glGetString(GL_VENDOR));
+	printf("GL version: %s\n", tfx_glGetString(GL_VERSION));
 
-	const char *real = (char*)CHECK(glGetString(GL_EXTENSIONS));
+	const char *real = (char*)CHECK(tfx_glGetString(GL_EXTENSIONS));
 	char *exts = strdup(real);
 	int len = 0;
 
@@ -273,9 +420,10 @@ void tfx_dump_caps() {
 
 	puts("TinyFX renderer: "
 	#ifdef TFX_USE_GLES // NYI
-		"GLES"##TFX_USE_GLES
+#define FUG(V) "GLES" #V
+		FUG(TFX_USE_GLES/10)
 	#else
-		"GLES2"
+		"GL4"
 	#endif
 	);
 
@@ -299,33 +447,57 @@ static struct {
 
 static tfx_caps caps;
 
+static tfx_platform_data platform_data;
+
 static void tvb_reset() {
 	transient_buffer.offset = 0;
 
+	if (platform_data.gl_get_proc_address != NULL) {
+		load_em_up(platform_data.gl_get_proc_address);
+	}
+
 	if (!transient_buffer.buf.gl_id) {
 		GLuint id;
-		glGenBuffers(1, &id);
-		glBindBuffer(GL_ARRAY_BUFFER, id);
-		glBufferData(GL_ARRAY_BUFFER, TFX_TRANSIENT_BUFFER_SIZE, NULL, GL_DYNAMIC_DRAW);
+		tfx_glGenBuffers(1, &id);
+		tfx_glBindBuffer(GL_ARRAY_BUFFER, id);
+		tfx_glBufferData(GL_ARRAY_BUFFER, TFX_TRANSIENT_BUFFER_SIZE, NULL, GL_DYNAMIC_DRAW);
 		transient_buffer.buf.gl_id = id;
 	}
 }
 
+void tfx_set_platform_data(tfx_platform_data pd) {
+	memcpy(&platform_data, &pd, sizeof(tfx_platform_data));
+}
+
+// null format = index buffer
 tfx_transient_buffer tfx_transient_buffer_new(tfx_vertex_format *fmt, uint16_t num_verts) {
+	// transient index buffers aren't supported yet
+	assert(fmt != NULL);
+
 	tfx_transient_buffer buf;
 	buf.format = fmt;
 	buf.data = transient_buffer.data + transient_buffer.offset;
 	buf.num = num_verts;
 	buf.offset = transient_buffer.offset;
-	transient_buffer.offset += num_verts * fmt->stride;
+	uint32_t stride = sizeof(uint16_t);
+	if (fmt) {
+		stride = fmt->stride;
+	}
+	transient_buffer.offset += (uint32_t)(num_verts * stride);
+	transient_buffer.offset += transient_buffer.offset % 4; // align, in case the stride is weird
 	return buf;
 }
 
+// null format = available indices (uint16)
 uint32_t tfx_transient_buffer_get_available(tfx_vertex_format *fmt) {
 	assert(fmt->stride > 0);
 	uint32_t avail = TFX_TRANSIENT_BUFFER_SIZE;
 	avail -= transient_buffer.offset;
-	avail /= fmt->stride;
+	uint32_t stride = sizeof(uint16_t);
+	if (fmt) {
+		stride = fmt->stride;
+	}
+	avail /= (uint32_t)stride;
 	return avail;
 }
 
@@ -338,13 +510,13 @@ void tfx_reset(uint16_t width, uint16_t height) {
 	backbuffer.height = height;
 
 	if (!uniform_buffer) {
-		uniform_buffer = malloc(TFX_UNIFORM_BUFFER_SIZE);
+		uniform_buffer = (uint8_t*)malloc(TFX_UNIFORM_BUFFER_SIZE);
 		memset(uniform_buffer, 0, TFX_UNIFORM_BUFFER_SIZE);
 		ub_cursor = uniform_buffer;
 	}
 
 	if (!transient_buffer.data) {
-		transient_buffer.data = malloc(TFX_TRANSIENT_BUFFER_SIZE);
+		transient_buffer.data = (uint8_t*)malloc(TFX_TRANSIENT_BUFFER_SIZE);
 		memset(transient_buffer.data, 0xfc, TFX_TRANSIENT_BUFFER_SIZE);
 		tvb_reset();
 	}
@@ -361,7 +533,7 @@ void tfx_shutdown() {
 	transient_buffer.data = NULL;
 
 	if (transient_buffer.buf.gl_id) {
-		glDeleteBuffers(1, &transient_buffer.buf.gl_id);
+		tfx_glDeleteBuffers(1, &transient_buffer.buf.gl_id);
 	}
 
 	// this can happen if you shutdown before calling frame()
@@ -376,51 +548,57 @@ static bool shaderc_allocated = false;
 static GLuint load_shader(GLenum type, const char *shaderSrc) {
 	shaderc_allocated = true;
 
-	GLuint shader = CHECK(glCreateShader(type));
+	GLuint shader = CHECK(tfx_glCreateShader(type));
 	if (!shader) {
 		fprintf(stderr, "Something has gone horribly wrong, and we can't make shaders.\n");
 		return 0;
 	}
 
-	CHECK(glShaderSource(shader, 1, &shaderSrc, NULL));
-	CHECK(glCompileShader(shader));
+	CHECK(tfx_glShaderSource(shader, 1, &shaderSrc, NULL));
+	CHECK(tfx_glCompileShader(shader));
 
 	GLint compiled;
-	CHECK(glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled));
+	CHECK(tfx_glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled));
 	if (!compiled) {
 		GLint infoLen = 0;
-		CHECK(glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &infoLen));
+		CHECK(tfx_glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &infoLen));
 		if (infoLen > 0) {
-			char* infoLog = malloc(sizeof(char) * infoLen);
-			CHECK(glGetShaderInfoLog(shader, infoLen, NULL, infoLog));
+			char* infoLog = (char*)malloc(sizeof(char) * infoLen);
+			CHECK(tfx_glGetShaderInfoLog(shader, infoLen, NULL, infoLog));
 			fprintf(stderr, "Error compiling shader:\n%s\n", infoLog);
 			free(infoLog);
 		}
-		CHECK(glDeleteShader(shader));
+		CHECK(tfx_glDeleteShader(shader));
 		return 0;
 	}
 
 	return shader;
 }
 
-const char *vs_prepend = ""
-	"#if GL_ES\n"
-	"#define in attribute\n"
-	"#define out varying\n"
-	"#endif\n"
+#ifdef TFX_GLES
+const char *vs_prepend = "#version 100\n"
+	"precision highp float;\n"
 	"#line 1\n"
 ;
-const char *fs_prepend = ""
-	"#if GL_ES\n"
-	"#define in varying\n"
-	"#endif\n"
+const char *fs_prepend = "#version 100\n"
+	"precision mediump float;\n"
 	"#line 1\n"
 ;
+#else
+const char *vs_prepend = "#version 430 core\n"
+	//"precision highp float;\n"
+	"#line 1\n"
+;
+const char *fs_prepend = "#version 430 core\n"
+	//"precision mediump float;\n"
+	"#line 1\n"
+;
+#endif
 
 static char *sappend(const char *left, const char *right) {
 	size_t ls = strlen(left);
 	size_t rs = strlen(right);
-	char *ss = malloc(ls+rs+1);
+	char *ss = (char*)malloc(ls+rs+1);
 	memcpy(ss, left, ls);
 	memcpy(ss+ls, right, rs);
 	ss[ls+rs] = '\0';
@@ -433,43 +611,43 @@ tfx_program tfx_program_new(const char *_vss, const char *_fss, const char *attr
 
 	GLuint vs = load_shader(GL_VERTEX_SHADER, vss);
 	GLuint fs = load_shader(GL_FRAGMENT_SHADER, fss);
-	GLuint program = CHECK(glCreateProgram());
+	GLuint program = CHECK(tfx_glCreateProgram());
 	if (!program) {
 		return 0;
 	}
 	free(vss);
 	free(fss);
 
-	CHECK(glAttachShader(program, vs));
-	CHECK(glAttachShader(program, fs));
+	CHECK(tfx_glAttachShader(program, vs));
+	CHECK(tfx_glAttachShader(program, fs));
 
 	const char **it = attribs;
 	int i = 0;
 	while (*it != NULL) {
-		CHECK(glBindAttribLocation(program, i, *it));
+		CHECK(tfx_glBindAttribLocation(program, i, *it));
 		i++;
 		it++;
 	}
 
-	CHECK(glLinkProgram(program));
+	CHECK(tfx_glLinkProgram(program));
 
 	GLint linked;
-	CHECK(glGetProgramiv(program, GL_LINK_STATUS, &linked));
+	CHECK(tfx_glGetProgramiv(program, GL_LINK_STATUS, &linked));
 	if (!linked) {
 		GLint infoLen = 0;
-		CHECK(glGetProgramiv(program, GL_INFO_LOG_LENGTH, &infoLen));
+		CHECK(tfx_glGetProgramiv(program, GL_INFO_LOG_LENGTH, &infoLen));
 		if (infoLen > 0) {
-			char* infoLog = malloc(infoLen);
-			CHECK(glGetProgramInfoLog(program, infoLen, NULL, infoLog));
+			char* infoLog = (char*)malloc(infoLen);
+			CHECK(tfx_glGetProgramInfoLog(program, infoLen, NULL, infoLog));
 			fprintf(stderr, "Error linking program:\n%s\n", infoLog);
 			free(infoLog);
 		}
-		CHECK(glDeleteProgram(program));
+		CHECK(tfx_glDeleteProgram(program));
 		return 0;
 	}
 
-	CHECK(glDeleteShader(vs));
-	CHECK(glDeleteShader(fs));
+	CHECK(tfx_glDeleteShader(vs));
+	CHECK(tfx_glDeleteShader(fs));
 
 	return program;
 }
@@ -480,28 +658,28 @@ tfx_program tfx_program_cs_new(const char *css) {
 	}
 
 	GLuint cs = load_shader(GL_COMPUTE_SHADER, css);
-	GLuint program = CHECK(glCreateProgram());
+	GLuint program = CHECK(tfx_glCreateProgram());
 	if (!program) {
 		return 0;
 	}
-	CHECK(glAttachShader(program, cs));
-	CHECK(glLinkProgram(program));
+	CHECK(tfx_glAttachShader(program, cs));
+	CHECK(tfx_glLinkProgram(program));
 
 	GLint linked;
-	CHECK(glGetProgramiv(program, GL_LINK_STATUS, &linked));
+	CHECK(tfx_glGetProgramiv(program, GL_LINK_STATUS, &linked));
 	if (!linked) {
 		GLint infoLen = 0;
-		CHECK(glGetProgramiv(program, GL_INFO_LOG_LENGTH, &infoLen));
+		CHECK(tfx_glGetProgramiv(program, GL_INFO_LOG_LENGTH, &infoLen));
 		if (infoLen > 0) {
-			char* infoLog = malloc(infoLen);
-			CHECK(glGetProgramInfoLog(program, infoLen, NULL, infoLog));
+			char* infoLog = (char*)malloc(infoLen);
+			CHECK(tfx_glGetProgramInfoLog(program, infoLen, NULL, infoLog));
 			fprintf(stderr, "Error linking program:\n%s\n", infoLog);
 			free(infoLog);
 		}
-		CHECK(glDeleteProgram(program));
+		CHECK(tfx_glDeleteProgram(program));
 		return 0;
 	}
-	CHECK(glDeleteShader(cs));
+	CHECK(tfx_glDeleteShader(cs));
 
 	return program;
 }
@@ -513,7 +691,7 @@ tfx_vertex_format tfx_vertex_format_start() {
 	return fmt;
 }
 
-void tfx_vertex_format_add(tfx_vertex_format *fmt, size_t count, bool normalized, tfx_component_type type) {
+void tfx_vertex_format_add(tfx_vertex_format *fmt, uint8_t slot, size_t count, bool normalized, tfx_component_type type) {
 	tfx_vertex_component component;
 	memset(&component, 0, sizeof(tfx_vertex_component));
 
@@ -522,13 +700,17 @@ void tfx_vertex_format_add(tfx_vertex_format *fmt, size_t count, bool normalized
 	component.normalized = normalized;
 	component.type = type;
 
-	sb_push(fmt->components, component);
+	fmt->components[slot] = component;
+}
+
+size_t tfx_vertex_format_offset(tfx_vertex_format *fmt, uint8_t slot) {
+	assert(slot < 8);
+	return fmt->components[slot].offset;
 }
 
 void tfx_vertex_format_end(tfx_vertex_format *fmt) {
 	size_t stride = 0;
-	int nc = sb_count(fmt->components);
-	for (int i = 0; i < nc; i++) {
+	for (int i = 0; i < 8; i++) {
 		tfx_vertex_component *vc = &fmt->components[i];
 		size_t bytes = 0;
 		switch (vc->type) {
@@ -560,11 +742,11 @@ tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tf
 	buffer.gl_id = 0;
 	buffer.format = format;
 
-	CHECK(glGenBuffers(1, &buffer.gl_id));
-	CHECK(glBindBuffer(GL_ARRAY_BUFFER, buffer.gl_id));
+	CHECK(tfx_glGenBuffers(1, &buffer.gl_id));
+	CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, buffer.gl_id));
 
 	if (size != 0) {
-		CHECK(glBufferData(GL_ARRAY_BUFFER, size, data, gl_usage));
+		CHECK(tfx_glBufferData(GL_ARRAY_BUFFER, size, data, gl_usage));
 	}
 
 	return buffer;
@@ -579,18 +761,18 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, t
 	t.format = format;
 
 	GLuint id = 0;
-	CHECK(glGenTextures(1, &id));
-	CHECK(glBindTexture(GL_TEXTURE_2D, id));
+	CHECK(tfx_glGenTextures(1, &id));
+	CHECK(tfx_glBindTexture(GL_TEXTURE_2D, id));
 	if ((flags & TFX_TEXTURE_FILTER_POINT) == TFX_TEXTURE_FILTER_POINT) {
-		CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
-		CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST));
+		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
+		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST));
 	}
 	else if ((flags & TFX_TEXTURE_FILTER_LINEAR) == TFX_TEXTURE_FILTER_LINEAR || !flags) {
-		CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
-		CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR));
+		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR));
 	}
-	CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
-	CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
+	CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+	CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
 
 	GLenum gl_fmt = 0;
 	GLenum gl_type = 0;
@@ -608,13 +790,15 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, t
 			break;
 	}
 
-	CHECK(glPixelStorei(GL_UNPACK_ALIGNMENT, 1));
-	CHECK(glTexImage2D(GL_TEXTURE_2D, 0, gl_fmt, w, h, 0, gl_fmt, gl_type, data));
+	CHECK(tfx_glPixelStorei(GL_UNPACK_ALIGNMENT, 1));
+	CHECK(tfx_glTexImage2D(GL_TEXTURE_2D, 0, gl_fmt, w, h, 0, gl_fmt, gl_type, data));
 	if (gen_mips && data) {
-		CHECK(glGenerateMipmap(GL_TEXTURE_2D));
+		CHECK(tfx_glGenerateMipmap(GL_TEXTURE_2D));
 	}
 
 	t.gl_id = id;
+
+	assert(id > 0);
 
 	return t;
 }
@@ -663,32 +847,32 @@ tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format) {
 
 	// and now the fbo.
 	GLuint fbo;
-	CHECK(glGenFramebuffers(1, &fbo));
-	CHECK(glBindFramebuffer(GL_FRAMEBUFFER, fbo));
+	CHECK(tfx_glGenFramebuffers(1, &fbo));
+	CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, fbo));
 
 	// setup color buffer...
 	if (color_format) {
 		assert(internal != 0);
 
 		GLuint color;
-		CHECK(glGenTextures(1, &color));
-		CHECK(glBindTexture(GL_TEXTURE_2D, color));
-		CHECK(glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, internal, color_format, NULL));
-		CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST));
-		CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
-		CHECK(glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color, 0));
+		CHECK(tfx_glGenTextures(1, &color));
+		CHECK(tfx_glBindTexture(GL_TEXTURE_2D, color));
+		CHECK(tfx_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, internal, color_format, NULL));
+		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST));
+		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
+		CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color, 0));
 	}
 
 	// setup depth buffer...
 	if (depth_format) {
 		GLuint rbo;
-		CHECK(glGenRenderbuffers(1, &rbo));
-		CHECK(glBindRenderbuffer(GL_RENDERBUFFER, rbo));
-		CHECK(glRenderbufferStorage(GL_RENDERBUFFER, depth_format, w, h));
-		CHECK(glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rbo));
+		CHECK(tfx_glGenRenderbuffers(1, &rbo));
+		CHECK(tfx_glBindRenderbuffer(GL_RENDERBUFFER, rbo));
+		CHECK(tfx_glRenderbufferStorage(GL_RENDERBUFFER, depth_format, w, h));
+		CHECK(tfx_glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rbo));
 	}
 
-	GLenum status = CHECK(glCheckFramebufferStatus(GL_FRAMEBUFFER));
+	GLenum status = CHECK(tfx_glCheckFramebufferStatus(GL_FRAMEBUFFER));
 	if (status != GL_FRAMEBUFFER_COMPLETE) {
 		// TODO: return something more error-y
 		return c;
@@ -836,6 +1020,14 @@ void tfx_set_callback(tfx_draw_callback cb) {
 	tmp_draw.callback = cb;
 }
 
+void tfx_set_scissor(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+	tmp_draw.use_scissor = true;
+	tmp_draw.scissor_rect.x = x;
+	tmp_draw.scissor_rect.y = y;
+	tmp_draw.scissor_rect.w = w;
+	tmp_draw.scissor_rect.h = h;
+}
+
 void tfx_set_texture(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot) {
 	assert(slot <= 8);
 	assert(uniform != NULL);
@@ -847,6 +1039,7 @@ void tfx_set_texture(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot) {
 
 	sb_push(uniforms, *uniform);
 
+	assert(tex->gl_id > 0);
 	tmp_draw.textures[slot] = tex;
 }
 
@@ -863,6 +1056,7 @@ void tfx_set_buffer(tfx_buffer *buf, uint8_t slot, bool write) {
 #endif
 }
 
+// TODO: make this work for index buffers
 void tfx_set_transient_buffer(tfx_transient_buffer tb) {
 	assert(tb.format != NULL);
 	tmp_draw.vbo = &transient_buffer.buf;
@@ -945,7 +1139,7 @@ static void push_uniforms(tfx_program program, tfx_draw *add_state) {
 	int n = sb_count(uniforms);
 	for (int i = n-1; i >= 0; i--) {
 		tfx_uniform uniform = uniforms[i];
-		GLuint loc = CHECK(glGetUniformLocation(program, uniform.name));
+		GLint loc = CHECK(tfx_glGetUniformLocation(program, uniform.name));
 		if (loc >= 0) {
 			// only record the last update for a given uniform
 			if (!ts_lookup(found, uniform.name)) {
@@ -1018,7 +1212,7 @@ void tfx_touch(uint8_t id) {
 	sb_push(view->draws, tmp_draw);
 }
 
-static inline tfx_canvas *get_canvas(tfx_view *view) {
+static tfx_canvas *get_canvas(tfx_view *view) {
 	assert(view != NULL);
 	if (view->canvas != NULL) {
 		return view->canvas;
@@ -1050,10 +1244,10 @@ static void release_compiler() {
 	}
 
 	int release_shader_c = 0;
-	CHECK(glGetIntegerv(GL_SHADER_COMPILER, &release_shader_c));
+	CHECK(tfx_glGetIntegerv(GL_SHADER_COMPILER, &release_shader_c));
 
 	if (release_shader_c) {
-		CHECK(glReleaseShaderCompiler());
+		CHECK(tfx_glReleaseShaderCompiler());
 	}
 
 	shaderc_allocated = false;
@@ -1070,15 +1264,26 @@ tfx_stats tfx_frame() {
 
 	int last_count = 0;
 
+	//CHECK(tfx_glEnable(GL_FRAMEBUFFER_SRGB));
+
 #ifdef TFX_MODERN
 	GLuint vao;
-	CHECK(glGenVertexArrays(1, &vao));
-	CHECK(glBindVertexArray(vao));
+	CHECK(tfx_glGenVertexArrays(1, &vao));
+	CHECK(tfx_glBindVertexArray(vao));
 #endif
 
 	if (transient_buffer.offset > 0) {
-		CHECK(glBindBuffer(GL_ARRAY_BUFFER, transient_buffer.buf.gl_id));
-		CHECK(glBufferSubData(GL_ARRAY_BUFFER, 0, transient_buffer.offset, transient_buffer.data));
+		CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, transient_buffer.buf.gl_id));
+		if (tfx_glMapBufferRange && tfx_glUnmapBuffer) {
+			void *ptr = tfx_glMapBufferRange(GL_ARRAY_BUFFER, 0, transient_buffer.offset, GL_MAP_WRITE_BIT);
+			if (ptr) {
+				memcpy(ptr, transient_buffer.data, transient_buffer.offset);
+				CHECK(tfx_glUnmapBuffer(GL_ARRAY_BUFFER));
+			}
+		}
+		else {
+			CHECK(tfx_glBufferSubData(GL_ARRAY_BUFFER, 0, transient_buffer.offset, transient_buffer.data));
+		}
 	}
 
 	for (int id = 0; id < VIEW_MAX; id++) {
@@ -1091,7 +1296,7 @@ tfx_stats tfx_frame() {
 			for (int i = 0; i < cd; i++) {
 				tfx_draw job = view->draws[i];
 				if (job.program != program) {
-					CHECK(glUseProgram(job.program));
+					CHECK(tfx_glUseProgram(job.program));
 					program = job.program;
 				}
 				// TODO: bind image textures
@@ -1099,19 +1304,19 @@ tfx_stats tfx_frame() {
 					if (job.textures[i] != NULL) {
 						tfx_buffer *ssbo = job.ssbos[i];
 						if (ssbo->dirty) {
-							CHECK(glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT));
+							CHECK(tfx_glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT));
 							ssbo->dirty = false;
 						}
 						if (job.ssbo_write[i]) {
 							ssbo->dirty = true;
 						}
-						CHECK(glBindBufferBase(GL_SHADER_STORAGE_BUFFER, i, job.ssbos[i]->gl_id));
+						CHECK(tfx_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, i, job.ssbos[i]->gl_id));
 					}
 					else {
-						CHECK(glBindBufferBase(GL_SHADER_STORAGE_BUFFER, i, 0));
+						CHECK(tfx_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, i, 0));
 					}
 				}
-				CHECK(glDispatchCompute(job.threads_x, job.threads_y, job.threads_z));
+				CHECK(tfx_glDispatchCompute(job.threads_x, job.threads_y, job.threads_z));
 			}
 		}
 #endif
@@ -1130,16 +1335,19 @@ tfx_stats tfx_frame() {
 
 		// TODO: fast blit path for ES3+
 
-		CHECK(glBindFramebuffer(GL_FRAMEBUFFER, canvas->gl_id));
-		CHECK(glViewport(0, 0, canvas->width, canvas->height));
+		CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, canvas->gl_id));
+		CHECK(tfx_glViewport(0, 0, canvas->width, canvas->height));
+
 		if (view->flags & TFX_VIEW_SCISSOR) {
-			CHECK(glScissor(
-				view->scissor_rect.x,
-				view->scissor_rect.y,
-				view->scissor_rect.w,
-				view->scissor_rect.h
-			));
+			tfx_rect rect = view->scissor_rect;
+			CHECK(tfx_glEnable(GL_SCISSOR_TEST));
+			CHECK(tfx_glScissor(rect.x, canvas->height - rect.y - rect.h, rect.w, rect.h));
 		}
+		else {
+			CHECK(tfx_glDisable(GL_SCISSOR_TEST));
+		}
+
+		CHECK(tfx_glColorMask(true, true, true, true));
 
 		GLuint mask = 0;
 		if (view->flags & TFX_VIEW_CLEAR_COLOR) {
@@ -1151,15 +1359,15 @@ tfx_stats tfx_frame() {
 				((color >>  8) & 0xff) / 255.0f,
 				((color >>  0) & 0xff) / 255.0f
 			};
-			CHECK(glClearColor(c[0], c[1], c[2], c[3]));
+			CHECK(tfx_glClearColor(c[0], c[1], c[2], c[3]));
 		}
 		if (view->flags & TFX_VIEW_CLEAR_DEPTH) {
 			mask |= GL_DEPTH_BUFFER_BIT;
-			CHECK(glClearDepthf(view->clear_depth));
+			CHECK(tfx_glClearDepthf(view->clear_depth));
 		}
 
 		if (mask != 0) {
-			CHECK(glClear(mask));
+			CHECK(tfx_glClear(mask));
 		}
 
 		// fallback blit path for ES2 (no glBlitFramebuffer available)
@@ -1170,64 +1378,89 @@ tfx_stats tfx_frame() {
 		}
 		*/
 
-
 		if (view->flags & TFX_VIEW_DEPTH_TEST_MASK) {
-			CHECK(glEnable(GL_DEPTH_TEST));
+			CHECK(tfx_glEnable(GL_DEPTH_TEST));
 			if (view->flags & TFX_VIEW_DEPTH_TEST_LT) {
-				CHECK(glDepthFunc(GL_LEQUAL));
+				CHECK(tfx_glDepthFunc(GL_LEQUAL));
 			}
 			else if (view->flags & TFX_VIEW_DEPTH_TEST_GT) {
-				CHECK(glDepthFunc(GL_GEQUAL));
+				CHECK(tfx_glDepthFunc(GL_GEQUAL));
 			}
 		}
 		else {
-			CHECK(glDisable(GL_DEPTH_TEST));
+			CHECK(tfx_glDisable(GL_DEPTH_TEST));
 		}
 
 		// TODO: reduce redundant state setting
 		for (int i = 0; i < nd; i++) {
 			tfx_draw draw = view->draws[i];
 			if (draw.program != program) {
-				CHECK(glUseProgram(draw.program));
+				CHECK(tfx_glUseProgram(draw.program));
 				program = draw.program;
 			}
-			CHECK(glDepthMask((draw.flags & TFX_STATE_DEPTH_WRITE) > 0));
+			CHECK(tfx_glDepthMask((draw.flags & TFX_STATE_DEPTH_WRITE) > 0));
 			if (caps.multisample) {
 				if (draw.flags & TFX_STATE_MSAA) {
-					CHECK(glEnable(GL_MULTISAMPLE));
+					CHECK(tfx_glEnable(GL_MULTISAMPLE));
 				}
 				else {
-					CHECK(glDisable(GL_MULTISAMPLE));
+					CHECK(tfx_glDisable(GL_MULTISAMPLE));
 				}
 			}
 			if (draw.flags & TFX_STATE_CULL_CW) {
-				CHECK(glEnable(GL_CULL_FACE));
-				CHECK(glFrontFace(GL_CW));
+				CHECK(tfx_glEnable(GL_CULL_FACE));
+				CHECK(tfx_glFrontFace(GL_CW));
 			}
 			else if (draw.flags & TFX_STATE_CULL_CCW) {
-				CHECK(glEnable(GL_CULL_FACE));
-				CHECK(glFrontFace(GL_CCW));
+				CHECK(tfx_glEnable(GL_CULL_FACE));
+				CHECK(tfx_glFrontFace(GL_CCW));
 			}
 			else {
-				CHECK(glDisable(GL_CULL_FACE));
+				CHECK(tfx_glDisable(GL_CULL_FACE));
+			}
+
+			if (draw.flags & TFX_STATE_BLEND_MASK) {
+				CHECK(tfx_glEnable(GL_BLEND));
+				if (draw.flags & TFX_STATE_BLEND_ALPHA) {
+					CHECK(tfx_glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA));
+				}
+			}
+			else {
+				CHECK(tfx_glDisable(GL_BLEND));
+			}
+
+			bool write_rgb = draw.flags & TFX_STATE_RGB_WRITE;
+			bool write_alpha = draw.flags & TFX_STATE_ALPHA_WRITE;
+			CHECK(tfx_glColorMask(write_rgb, write_rgb, write_rgb, write_alpha));
+
+			if ((view->flags & TFX_VIEW_SCISSOR) || draw.use_scissor) {
+				CHECK(tfx_glEnable(GL_SCISSOR_TEST));
+				tfx_rect rect = view->scissor_rect;
+				if (draw.use_scissor) {
+					rect = draw.scissor_rect;
+				}
+				CHECK(tfx_glScissor(rect.x, canvas->height - rect.y - rect.h, rect.w, rect.h));
+			}
+			else {
+				CHECK(tfx_glDisable(GL_SCISSOR_TEST));
 			}
 
 			int nu = sb_count(draw.uniforms);
 			for (int j = 0; j < nu; j++) {
 				tfx_uniform uniform = draw.uniforms[j];
-				GLint loc = CHECK(glGetUniformLocation(program, uniform.name));
+				GLint loc = CHECK(tfx_glGetUniformLocation(program, uniform.name));
 				if (loc < 0) {
 					continue;
 				}
 				switch (uniform.type) {
-					case TFX_UNIFORM_INT:   CHECK(glUniform1i(loc, *uniform.idata)); break;
-					case TFX_UNIFORM_FLOAT: CHECK(glUniform1f(loc, *uniform.fdata)); break;
-					case TFX_UNIFORM_VEC2:  CHECK(glUniform2fv(loc, uniform.count, uniform.fdata)); break;
-					case TFX_UNIFORM_VEC3:  CHECK(glUniform3fv(loc, uniform.count, uniform.fdata)); break;
-					case TFX_UNIFORM_VEC4:  CHECK(glUniform4fv(loc, uniform.count, uniform.fdata)); break;
-					case TFX_UNIFORM_MAT2:  CHECK(glUniformMatrix2fv(loc, uniform.count, 0, uniform.fdata)); break;
-					case TFX_UNIFORM_MAT3:  CHECK(glUniformMatrix3fv(loc, uniform.count, 0, uniform.fdata)); break;
-					case TFX_UNIFORM_MAT4:  CHECK(glUniformMatrix4fv(loc, uniform.count, 0, uniform.fdata)); break;
+					case TFX_UNIFORM_INT:   CHECK(tfx_glUniform1i(loc, *uniform.idata)); break;
+					case TFX_UNIFORM_FLOAT: CHECK(tfx_glUniform1f(loc, *uniform.fdata)); break;
+					case TFX_UNIFORM_VEC2:  CHECK(tfx_glUniform2fv(loc, uniform.count, uniform.fdata)); break;
+					case TFX_UNIFORM_VEC3:  CHECK(tfx_glUniform3fv(loc, uniform.count, uniform.fdata)); break;
+					case TFX_UNIFORM_VEC4:  CHECK(tfx_glUniform4fv(loc, uniform.count, uniform.fdata)); break;
+					case TFX_UNIFORM_MAT2:  CHECK(tfx_glUniformMatrix2fv(loc, uniform.count, 0, uniform.fdata)); break;
+					case TFX_UNIFORM_MAT3:  CHECK(tfx_glUniformMatrix3fv(loc, uniform.count, 0, uniform.fdata)); break;
+					case TFX_UNIFORM_MAT4:  CHECK(tfx_glUniformMatrix4fv(loc, uniform.count, 0, uniform.fdata)); break;
 					default: assert(false); break;
 				}
 			}
@@ -1256,23 +1489,28 @@ tfx_stats tfx_frame() {
 
 #ifdef TFX_COMPUTE
 			if (draw.vbo->dirty) {
-				CHECK(glMemoryBarrier(GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT));
+				CHECK(tfx_glMemoryBarrier(GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT));
 				draw.vbo->dirty = false;
 			}
 #endif
 
-			CHECK(glBindBuffer(GL_ARRAY_BUFFER, vbo));
-
+			uint32_t va_offset = 0;
 			if (draw.tvb_fmt) {
 				draw.vbo->format = draw.tvb_fmt;
+				va_offset = draw.offset;
 			}
 			tfx_vertex_format *fmt = draw.vbo->format;
 			assert(fmt != NULL);
 
-			int nc = sb_count(fmt->components);
+			CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, vbo));
+
+			int nc = 8;
 			int real = 0;
 			for (int i = 0; i < nc; i++) {
 				tfx_vertex_component vc = fmt->components[i];
+				if (!vc.size) {
+					continue;
+				}
 				GLenum gl_type = GL_FLOAT;
 				switch (vc.type) {
 					case TFX_TYPE_SKIP: continue;
@@ -1283,38 +1521,37 @@ tfx_stats tfx_frame() {
 					case TFX_TYPE_FLOAT: break;
 					default: assert(false); break;
 				}
-				CHECK(glEnableVertexAttribArray(real));
-				CHECK(glVertexAttribPointer(real, vc.size, gl_type, vc.normalized, fmt->stride, (GLvoid*)vc.offset));
+				CHECK(tfx_glEnableVertexAttribArray(real));
+				CHECK(tfx_glVertexAttribPointer(real, (GLint)vc.size, gl_type, vc.normalized, (GLsizei)fmt->stride, (GLvoid*)(vc.offset + va_offset)));
 				real += 1;
 			}
 			nc = last_count - nc;
 			for (int i = 0; i <= nc; i++) {
-				CHECK(glDisableVertexAttribArray(last_count-i));
+				CHECK(tfx_glDisableVertexAttribArray(last_count - i));
 			}
 			last_count = real;
 
 			for (int i = 0; i < 8; i++) {
-				CHECK(glActiveTexture(GL_TEXTURE0+i));
-				if (draw.textures[i] != NULL) {
-					CHECK(glBindTexture(GL_TEXTURE_2D, draw.textures[i]->gl_id));
-				}
-				else {
-					CHECK(glBindTexture(GL_TEXTURE_2D, 0));
+				tfx_texture *tex = draw.textures[i];
+				if (tex != NULL) {
+					CHECK(tfx_glActiveTexture(GL_TEXTURE0 + i));
+					CHECK(tfx_glBindTexture(GL_TEXTURE_2D, tex->gl_id));
+					assert(tex->gl_id > 0);
 				}
 			}
 
 			if (draw.ibo) {
 #ifdef TFX_COMPUTE
 				if (draw.ibo->dirty) {
-					CHECK(glMemoryBarrier(GL_ELEMENT_ARRAY_BARRIER_BIT));
+					CHECK(tfx_glMemoryBarrier(GL_ELEMENT_ARRAY_BARRIER_BIT));
 					draw.ibo->dirty = false;
 				}
 #endif
-				CHECK(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, draw.ibo->gl_id));
-				CHECK(glDrawElements(mode, draw.indices, GL_UNSIGNED_SHORT, (GLvoid*)draw.offset));
+				CHECK(tfx_glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, draw.ibo->gl_id));
+				CHECK(tfx_glDrawElementsInstanced(mode, draw.indices, GL_UNSIGNED_SHORT, (GLvoid*)draw.offset, 1));
 			}
 			else {
-				CHECK(glDrawArrays(mode, draw.offset, draw.indices));
+				CHECK(tfx_glDrawArraysInstanced(mode, 0, (GLsizei)draw.indices, 1));
 			}
 		}
 
@@ -1337,8 +1574,11 @@ tfx_stats tfx_frame() {
 
 	ub_cursor = uniform_buffer;
 
+	CHECK(tfx_glDisable(GL_SCISSOR_TEST));
+	CHECK(tfx_glColorMask(true, true, true, true));
+
 #ifdef TFX_MODERN
-	CHECK(glDeleteVertexArrays(1, &vao));
+	CHECK(tfx_glDeleteVertexArrays(1, &vao));
 #endif
 
 	return stats;

@@ -10,11 +10,14 @@ namespace tfx {
 		VertexFormat() {
 			this->fmt = tfx_vertex_format_start();
 		}
-		inline void add(size_t count, bool normalized = false, tfx_component_type type = TFX_TYPE_FLOAT) {
-			tfx_vertex_format_add(&this->fmt, count, normalized, type);
+		inline void add(size_t count, uint8_t slot, bool normalized = false, tfx_component_type type = TFX_TYPE_FLOAT) {
+			tfx_vertex_format_add(&this->fmt, slot, count, normalized, type);
 		}
 		inline void end() {
 			tfx_vertex_format_end(&this->fmt);
+		}
+		inline size_t offset(uint8_t slot) {
+			return tfx_vertex_format_offset(&this->fmt, slot);
 		}
 	};
 
