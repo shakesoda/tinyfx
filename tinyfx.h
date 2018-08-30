@@ -147,18 +147,22 @@ typedef struct tfx_vertex_component {
 } tfx_vertex_component;
 
 typedef struct tfx_vertex_format {
+	// limit to 8, since we only have an 8 bit mask
 	tfx_vertex_component components[8];
+	uint8_t count, component_mask, _pad0[2];
 	size_t stride;
 } tfx_vertex_format;
 
 typedef struct tfx_buffer {
 	unsigned gl_id;
 	bool dirty;
-	tfx_vertex_format *format;
+	bool has_format;
+	tfx_vertex_format format;
 } tfx_buffer;
 
 typedef struct tfx_transient_buffer {
-	tfx_vertex_format *format;
+	bool has_format;
+	tfx_vertex_format format;
 	void *data;
 	uint16_t num;
 	uint32_t offset;

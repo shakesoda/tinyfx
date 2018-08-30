@@ -127,9 +127,14 @@ typedef struct tfx_draw {
 	tfx_buffer *ssbos[8];
 	bool ssbo_write[8];
 #endif
-	tfx_buffer *vbo;
-	tfx_buffer *ibo;
-	tfx_vertex_format *tvb_fmt;
+	tfx_buffer vbo;
+	bool use_vbo;
+
+	tfx_buffer ibo;
+	bool use_ibo;
+
+	tfx_vertex_format tvb_fmt;
+	bool use_tvb;
 
 	tfx_rect scissor_rect;
 	bool use_scissor;
@@ -174,7 +179,7 @@ typedef struct tfx_view {
 	| TFX_STATE_DRAW_TRI_STRIP | TFX_STATE_DRAW_TRI_FAN \
 )
 
-static tfx_canvas backbuffer;
+static tfx_canvas g_backbuffer;
 
 typedef struct tfx_glext {
 	const char *ext;
@@ -261,6 +266,8 @@ PFNGLDISABLEVERTEXATTRIBARRAYPROC tfx_glDisableVertexAttribArray;
 PFNGLACTIVETEXTUREPROC tfx_glActiveTexture;
 PFNGLDRAWELEMENTSINSTANCEDPROC tfx_glDrawElementsInstanced;
 PFNGLDRAWARRAYSINSTANCEDPROC tfx_glDrawArraysInstanced;
+PFNGLDRAWELEMENTSPROC tfx_glDrawElements;
+PFNGLDRAWARRAYSPROC tfx_glDrawArrays;
 PFNGLDELETEVERTEXARRAYSPROC tfx_glDeleteVertexArrays;
 
 void load_em_up(void* (*get_proc_address)(const char*)) {
@@ -335,6 +342,8 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glActiveTexture = get_proc_address("glActiveTexture");
 	tfx_glDrawElementsInstanced = get_proc_address("glDrawElementsInstanced");
 	tfx_glDrawArraysInstanced = get_proc_address("glDrawArraysInstanced");
+	tfx_glDrawElements = get_proc_address("glDrawElements");
+	tfx_glDrawArrays = get_proc_address("glDrawArrays");
 	tfx_glDeleteVertexArrays = get_proc_address("glDeleteVertexArrays");
 }
 
@@ -433,58 +442,61 @@ void tfx_dump_caps() {
 }
 
 // uniforms updated this frame
-static tfx_uniform *uniforms = NULL;
-static uint8_t *uniform_buffer = NULL;
-static uint8_t *ub_cursor = NULL;
+static tfx_uniform *g_uniforms = NULL;
+static uint8_t *g_uniform_buffer = NULL;
+static uint8_t *g_ub_cursor = NULL;
 
-static tfx_view views[VIEW_MAX];
+static tfx_view g_views[VIEW_MAX];
 
 static struct {
 	uint8_t *data;
 	uint32_t offset;
 	tfx_buffer buf;
-} transient_buffer;
+} g_transient_buffer;
 
-static tfx_caps caps;
+static tfx_caps g_caps;
 
-static tfx_platform_data platform_data;
+static tfx_platform_data g_platform_data;
 
 static void tvb_reset() {
-	transient_buffer.offset = 0;
+	g_transient_buffer.offset = 0;
 
-	if (platform_data.gl_get_proc_address != NULL) {
-		load_em_up(platform_data.gl_get_proc_address);
+	if (g_platform_data.gl_get_proc_address != NULL) {
+		load_em_up(g_platform_data.gl_get_proc_address);
 	}
 
-	if (!transient_buffer.buf.gl_id) {
+	if (!g_transient_buffer.buf.gl_id) {
 		GLuint id;
-		tfx_glGenBuffers(1, &id);
-		tfx_glBindBuffer(GL_ARRAY_BUFFER, id);
-		tfx_glBufferData(GL_ARRAY_BUFFER, TFX_TRANSIENT_BUFFER_SIZE, NULL, GL_DYNAMIC_DRAW);
-		transient_buffer.buf.gl_id = id;
+		CHECK(tfx_glGenBuffers(1, &id));
+		CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, id));
+		CHECK(tfx_glBufferData(GL_ARRAY_BUFFER, TFX_TRANSIENT_BUFFER_SIZE, NULL, GL_DYNAMIC_DRAW));
+		g_transient_buffer.buf.gl_id = id;
 	}
 }
 
 void tfx_set_platform_data(tfx_platform_data pd) {
-	memcpy(&platform_data, &pd, sizeof(tfx_platform_data));
+	memcpy(&g_platform_data, &pd, sizeof(tfx_platform_data));
 }
 
 // null format = index buffer
 tfx_transient_buffer tfx_transient_buffer_new(tfx_vertex_format *fmt, uint16_t num_verts) {
 	// transient index buffers aren't supported yet
 	assert(fmt != NULL);
+	assert(fmt->stride > 0);
 
 	tfx_transient_buffer buf;
-	buf.format = fmt;
-	buf.data = transient_buffer.data + transient_buffer.offset;
+	memset(&buf, 0, sizeof(tfx_transient_buffer));
+	buf.data = g_transient_buffer.data + g_transient_buffer.offset;
 	buf.num = num_verts;
-	buf.offset = transient_buffer.offset;
+	buf.offset = g_transient_buffer.offset;
 	uint32_t stride = sizeof(uint16_t);
 	if (fmt) {
+		buf.has_format = true;
+		buf.format = *fmt;
 		stride = fmt->stride;
 	}
-	transient_buffer.offset += (uint32_t)(num_verts * stride);
-	transient_buffer.offset += transient_buffer.offset % 4; // align, in case the stride is weird
+	g_transient_buffer.offset += (uint32_t)(num_verts * stride);
+	g_transient_buffer.offset += g_transient_buffer.offset % 4; // align, in case the stride is weird
 	return buf;
 }
 
@@ -492,7 +504,7 @@ tfx_transient_buffer tfx_transient_buffer_new(tfx_vertex_format *fmt, uint16_t n
 uint32_t tfx_transient_buffer_get_available(tfx_vertex_format *fmt) {
 	assert(fmt->stride > 0);
 	uint32_t avail = TFX_TRANSIENT_BUFFER_SIZE;
-	avail -= transient_buffer.offset;
+	avail -= g_transient_buffer.offset;
 	uint32_t stride = sizeof(uint16_t);
 	if (fmt) {
 		stride = fmt->stride;
@@ -502,51 +514,51 @@ uint32_t tfx_transient_buffer_get_available(tfx_vertex_format *fmt) {
 }
 
 void tfx_reset(uint16_t width, uint16_t height) {
-	caps = tfx_get_caps();
+	g_caps = tfx_get_caps();
 
-	memset(&backbuffer, 0, sizeof(tfx_canvas));
-	backbuffer.gl_id  = 0;
-	backbuffer.width  = width;
-	backbuffer.height = height;
+	memset(&g_backbuffer, 0, sizeof(tfx_canvas));
+	g_backbuffer.gl_id = 0;
+	g_backbuffer.width = width;
+	g_backbuffer.height = height;
 
-	if (!uniform_buffer) {
-		uniform_buffer = (uint8_t*)malloc(TFX_UNIFORM_BUFFER_SIZE);
-		memset(uniform_buffer, 0, TFX_UNIFORM_BUFFER_SIZE);
-		ub_cursor = uniform_buffer;
+	if (!g_uniform_buffer) {
+		g_uniform_buffer = (uint8_t*)malloc(TFX_UNIFORM_BUFFER_SIZE);
+		memset(g_uniform_buffer, 0, TFX_UNIFORM_BUFFER_SIZE);
+		g_ub_cursor = g_uniform_buffer;
 	}
 
-	if (!transient_buffer.data) {
-		transient_buffer.data = (uint8_t*)malloc(TFX_TRANSIENT_BUFFER_SIZE);
-		memset(transient_buffer.data, 0xfc, TFX_TRANSIENT_BUFFER_SIZE);
+	if (!g_transient_buffer.data) {
+		g_transient_buffer.data = (uint8_t*)malloc(TFX_TRANSIENT_BUFFER_SIZE);
+		memset(g_transient_buffer.data, 0xfc, TFX_TRANSIENT_BUFFER_SIZE);
 		tvb_reset();
 	}
 
-	memset(&views, 0, sizeof(tfx_view)*VIEW_MAX);
+	memset(&g_views, 0, sizeof(tfx_view)*VIEW_MAX);
 }
 
 void tfx_shutdown() {
 	// TODO: clean up all GL objects, allocs, etc.
-	free(uniform_buffer);
-	uniform_buffer = NULL;
+	free(g_uniform_buffer);
+	g_uniform_buffer = NULL;
 
-	free(transient_buffer.data);
-	transient_buffer.data = NULL;
+	free(g_transient_buffer.data);
+	g_transient_buffer.data = NULL;
 
-	if (transient_buffer.buf.gl_id) {
-		tfx_glDeleteBuffers(1, &transient_buffer.buf.gl_id);
+	if (g_transient_buffer.buf.gl_id) {
+		tfx_glDeleteBuffers(1, &g_transient_buffer.buf.gl_id);
 	}
 
 	// this can happen if you shutdown before calling frame()
-	if (uniforms) {
-		sb_free(uniforms);
-		uniforms = NULL;
+	if (g_uniforms) {
+		sb_free(g_uniforms);
+		g_uniforms = NULL;
 	}
 }
 
-static bool shaderc_allocated = false;
+static bool g_shaderc_allocated = false;
 
 static GLuint load_shader(GLenum type, const char *shaderSrc) {
-	shaderc_allocated = true;
+	g_shaderc_allocated = true;
 
 	GLuint shader = CHECK(tfx_glCreateShader(type));
 	if (!shader) {
@@ -653,7 +665,7 @@ tfx_program tfx_program_new(const char *_vss, const char *_fss, const char *attr
 }
 
 tfx_program tfx_program_cs_new(const char *css) {
-	if (!caps.compute) {
+	if (!g_caps.compute) {
 		return 0;
 	}
 
@@ -692,15 +704,19 @@ tfx_vertex_format tfx_vertex_format_start() {
 }
 
 void tfx_vertex_format_add(tfx_vertex_format *fmt, uint8_t slot, size_t count, bool normalized, tfx_component_type type) {
-	tfx_vertex_component component;
-	memset(&component, 0, sizeof(tfx_vertex_component));
+	assert(type >= 0 && type <= TFX_TYPE_SKIP);
 
-	component.offset = 0;
-	component.size = count;
-	component.normalized = normalized;
-	component.type = type;
+	if (slot > fmt->count) {
+		fmt->count = slot;
+	}
+	tfx_vertex_component *component = &fmt->components[slot];
+	memset(component, 0, sizeof(tfx_vertex_component));
+	component->offset = 0;
+	component->size = count;
+	component->normalized = normalized;
+	component->type = type;
 
-	fmt->components[slot] = component;
+	fmt->component_mask |= 1 << slot;
 }
 
 size_t tfx_vertex_format_offset(tfx_vertex_format *fmt, uint8_t slot) {
@@ -740,7 +756,12 @@ tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tf
 	tfx_buffer buffer;
 	memset(&buffer, 0, sizeof(tfx_buffer));
 	buffer.gl_id = 0;
-	buffer.format = format;
+	if (format) {
+		assert(format->stride > 0);
+
+		buffer.has_format = true;
+		buffer.format = *format;
+	}
 
 	CHECK(tfx_glGenBuffers(1, &buffer.gl_id));
 	CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, buffer.gl_id));
@@ -911,16 +932,16 @@ tfx_uniform tfx_uniform_new(const char *name, tfx_uniform_type type, int count) 
 }
 
 void tfx_set_uniform(tfx_uniform *uniform, float *data) {
-	uniform->data = ub_cursor;
+	uniform->data = g_ub_cursor;
 	memcpy(uniform->fdata, data, uniform->size);
-	ub_cursor += uniform->size;
+	g_ub_cursor += uniform->size;
 
-	sb_push(uniforms, *uniform);
+	sb_push(g_uniforms, *uniform);
 }
 
 void tfx_view_set_transform(uint8_t id, float *_view, float *proj_l, float *proj_r) {
 	// TODO: reserve tfx_world_to_view, tfx_view_to_screen uniforms
-	tfx_view *view = &views[id];
+	tfx_view *view = &g_views[id];
 	assert(view != NULL);
 	memcpy(view->view, _view, sizeof(float)*16);
 	memcpy(view->proj_left, proj_l, sizeof(float)*16);
@@ -928,27 +949,27 @@ void tfx_view_set_transform(uint8_t id, float *_view, float *proj_l, float *proj
 }
 
 void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas) {
-	tfx_view *view = &views[id];
+	tfx_view *view = &g_views[id];
 	assert(view != NULL);
 	view->canvas = canvas;
 }
 
 void tfx_view_set_clear_color(uint8_t id, int color) {
-	tfx_view *view = &views[id];
+	tfx_view *view = &g_views[id];
 	assert(view != NULL);
 	view->flags |= TFX_VIEW_CLEAR_COLOR;
 	view->clear_color = color;
 }
 
 void tfx_view_set_clear_depth(uint8_t id, float depth) {
-	tfx_view *view = &views[id];
+	tfx_view *view = &g_views[id];
 	assert(view != NULL);
 	view->flags |= TFX_VIEW_CLEAR_DEPTH;
 	view->clear_depth = depth;
 }
 
 void tfx_view_set_depth_test(uint8_t id, tfx_depth_test mode) {
-	tfx_view *view = &views[id];
+	tfx_view *view = &g_views[id];
 	assert(view != NULL);
 
 	view->flags &= ~TFX_VIEW_DEPTH_TEST_MASK;
@@ -967,25 +988,25 @@ void tfx_view_set_depth_test(uint8_t id, tfx_depth_test mode) {
 }
 
 uint16_t tfx_view_get_width(uint8_t id) {
-	tfx_view *view = &views[id];
+	tfx_view *view = &g_views[id];
 	assert(view != NULL);
 
 	if (view->canvas != NULL) {
 		return view->canvas->width;
 	}
 
-	return backbuffer.width;
+	return g_backbuffer.width;
 }
 
 uint16_t tfx_view_get_height(uint8_t id) {
-	tfx_view *view = &views[id];
+	tfx_view *view = &g_views[id];
 	assert(view != NULL);
 
 	if (view->canvas != NULL) {
 		return view->canvas->height;
 	}
 
-	return backbuffer.height;
+	return g_backbuffer.height;
 }
 
 void tfx_view_get_dimensions(uint8_t id, uint16_t *w, uint16_t *h) {
@@ -998,7 +1019,7 @@ void tfx_view_get_dimensions(uint8_t id, uint16_t *w, uint16_t *h) {
 }
 
 void tfx_view_set_scissor(uint8_t id, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
-	tfx_view *view = &views[id];
+	tfx_view *view = &g_views[id];
 	view->flags |= TFX_VIEW_SCISSOR;
 
 	tfx_rect rect;
@@ -1010,22 +1031,22 @@ void tfx_view_set_scissor(uint8_t id, uint16_t x, uint16_t y, uint16_t w, uint16
 	view->scissor_rect = rect;
 }
 
-static tfx_draw tmp_draw;
+static tfx_draw g_tmp_draw;
 
 static void reset() {
-	memset(&tmp_draw, 0, sizeof(tfx_draw));
+	memset(&g_tmp_draw, 0, sizeof(tfx_draw));
 }
 
 void tfx_set_callback(tfx_draw_callback cb) {
-	tmp_draw.callback = cb;
+	g_tmp_draw.callback = cb;
 }
 
 void tfx_set_scissor(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
-	tmp_draw.use_scissor = true;
-	tmp_draw.scissor_rect.x = x;
-	tmp_draw.scissor_rect.y = y;
-	tmp_draw.scissor_rect.w = w;
-	tmp_draw.scissor_rect.h = h;
+	g_tmp_draw.use_scissor = true;
+	g_tmp_draw.scissor_rect.x = x;
+	g_tmp_draw.scissor_rect.y = y;
+	g_tmp_draw.scissor_rect.w = w;
+	g_tmp_draw.scissor_rect.h = h;
 }
 
 void tfx_set_texture(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot) {
@@ -1033,51 +1054,53 @@ void tfx_set_texture(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot) {
 	assert(uniform != NULL);
 	assert(uniform->count == 1);
 
-	uniform->data = ub_cursor;
+	uniform->data = g_ub_cursor;
 	uniform->idata[0] = slot;
-	ub_cursor += uniform->size;
+	g_ub_cursor += uniform->size;
 
-	sb_push(uniforms, *uniform);
+	sb_push(g_uniforms, *uniform);
 
 	assert(tex->gl_id > 0);
-	tmp_draw.textures[slot] = tex;
+	g_tmp_draw.textures[slot] = tex;
 }
 
 void tfx_set_state(uint64_t flags) {
-	tmp_draw.flags = flags;
+	g_tmp_draw.flags = flags;
 }
 
 void tfx_set_buffer(tfx_buffer *buf, uint8_t slot, bool write) {
 	assert(slot <= 8);
 	assert(buf != NULL);
-#ifdef TFX_COMPUTE
-	tmp_draw.ssbos[slot] = buf;
-	tmp_draw.ssbo_write[slot] = write;
-#endif
+	g_tmp_draw.ssbos[slot] = buf;
+	g_tmp_draw.ssbo_write[slot] = write;
 }
 
 // TODO: make this work for index buffers
 void tfx_set_transient_buffer(tfx_transient_buffer tb) {
-	assert(tb.format != NULL);
-	tmp_draw.vbo = &transient_buffer.buf;
-	tmp_draw.tvb_fmt = tb.format;
-	tmp_draw.offset = tb.offset;
-	tmp_draw.indices = tb.num;
+	assert(tb.has_format);
+	g_tmp_draw.vbo = g_transient_buffer.buf;
+	g_tmp_draw.use_vbo = true;
+	g_tmp_draw.use_tvb = true;
+	g_tmp_draw.tvb_fmt = tb.format;
+	g_tmp_draw.offset = tb.offset;
+	g_tmp_draw.indices = tb.num;
 }
 
 void tfx_set_vertices(tfx_buffer *vbo, int count) {
 	assert(vbo != NULL);
-	assert(vbo->format);
+	assert(vbo->has_format);
 
-	tmp_draw.vbo = vbo;
-	if (!tmp_draw.ibo) {
-		tmp_draw.indices = count;
+	g_tmp_draw.vbo = *vbo;
+	g_tmp_draw.use_vbo = true;
+	if (!g_tmp_draw.use_ibo) {
+		g_tmp_draw.indices = count;
 	}
 }
 
 void tfx_set_indices(tfx_buffer *ibo, int count) {
-	tmp_draw.ibo = ibo;
-	tmp_draw.indices = count;
+	g_tmp_draw.ibo = *ibo;
+	g_tmp_draw.use_ibo = true;
+	g_tmp_draw.indices = count;
 }
 
 // TODO: check that this works in real use...
@@ -1136,9 +1159,9 @@ static void push_uniforms(tfx_program program, tfx_draw *add_state) {
 
 	// TODO: this entire thing could probably be much faster.
 	// TODO: look into caching uniform locations. never trust GL.
-	int n = sb_count(uniforms);
+	int n = sb_count(g_uniforms);
 	for (int i = n-1; i >= 0; i--) {
-		tfx_uniform uniform = uniforms[i];
+		tfx_uniform uniform = g_uniforms[i];
 		GLint loc = CHECK(tfx_glGetUniformLocation(program, uniform.name));
 		if (loc >= 0) {
 			// only record the last update for a given uniform
@@ -1146,9 +1169,9 @@ static void push_uniforms(tfx_program program, tfx_draw *add_state) {
 				tfx_uniform found_uniform;
 				memcpy(&found_uniform, &uniform, sizeof(tfx_uniform));
 
-				found_uniform.data = ub_cursor;
+				found_uniform.data = g_ub_cursor;
 				memcpy(found_uniform.data, uniform.data, uniform.size);
-				ub_cursor += uniform.size;
+				g_ub_cursor += uniform.size;
 
 				ts_set(found, uniform.name);
 				sb_push(add_state->uniforms, found_uniform);
@@ -1160,15 +1183,14 @@ static void push_uniforms(tfx_program program, tfx_draw *add_state) {
 }
 
 void tfx_dispatch(uint8_t id, tfx_program program, uint32_t x, uint32_t y, uint32_t z) {
-#ifdef TFX_COMPUTE
-	tfx_view *view = &views[id];
-	tmp_draw.program = program;
+	tfx_view *view = &g_views[id];
+	g_tmp_draw.program = program;
 	assert(program != 0);
 	assert(view != NULL);
 	assert((x + y + z) > 0);
 
 	tfx_draw add_state;
-	memcpy(&add_state, &tmp_draw, sizeof(tfx_draw));
+	memcpy(&add_state, &g_tmp_draw, sizeof(tfx_draw));
 	add_state.threads_x = x;
 	add_state.threads_y = y;
 	add_state.threads_z = z;
@@ -1177,20 +1199,16 @@ void tfx_dispatch(uint8_t id, tfx_program program, uint32_t x, uint32_t y, uint3
 	sb_push(view->jobs, add_state);
 
 	reset();
-#else
-	reset();
-	return;
-#endif
 }
 
 void tfx_submit(uint8_t id, tfx_program program, bool retain) {
-	tfx_view *view = &views[id];
-	tmp_draw.program = program;
+	tfx_view *view = &g_views[id];
+	g_tmp_draw.program = program;
 	assert(program != 0);
 	assert(view != NULL);
 
 	tfx_draw add_state;
-	memcpy(&add_state, &tmp_draw, sizeof(tfx_draw));
+	memcpy(&add_state, &g_tmp_draw, sizeof(tfx_draw));
 	push_uniforms(program, &add_state);
 	sb_push(view->draws, add_state);
 
@@ -1200,16 +1218,16 @@ void tfx_submit(uint8_t id, tfx_program program, bool retain) {
 }
 
 void tfx_submit_ordered(uint8_t id, tfx_program program, uint32_t depth, bool retain) {
-	tmp_draw.depth = depth;
+	g_tmp_draw.depth = depth;
 	tfx_submit(id, program, retain);
 }
 
 void tfx_touch(uint8_t id) {
-	tfx_view *view = &views[id];
+	tfx_view *view = &g_views[id];
 	assert(view != NULL);
 
 	reset();
-	sb_push(view->draws, tmp_draw);
+	sb_push(view->draws, g_tmp_draw);
 }
 
 static tfx_canvas *get_canvas(tfx_view *view) {
@@ -1217,7 +1235,7 @@ static tfx_canvas *get_canvas(tfx_view *view) {
 	if (view->canvas != NULL) {
 		return view->canvas;
 	}
-	return &backbuffer;
+	return &g_backbuffer;
 }
 
 void tfx_blit(uint8_t dst, uint8_t src, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
@@ -1228,18 +1246,18 @@ void tfx_blit(uint8_t dst, uint8_t src, uint16_t x, uint16_t y, uint16_t w, uint
 	rect.h = h;
 
 	tfx_blit_op blit;
-	blit.source = get_canvas(&views[src]);
+	blit.source = get_canvas(&g_views[src]);
 	blit.rect = rect;
 
 	// this would cause a GL error and doesn't make sense.
-	assert(blit.source != get_canvas(&views[dst]));
+	assert(blit.source != get_canvas(&g_views[dst]));
 
-	tfx_view *view = &views[dst];
+	tfx_view *view = &g_views[dst];
 	sb_push(view->blits, blit);
 }
 
 static void release_compiler() {
-	if (!shaderc_allocated) {
+	if (!g_shaderc_allocated) {
 		return;
 	}
 
@@ -1250,7 +1268,7 @@ static void release_compiler() {
 		CHECK(tfx_glReleaseShaderCompiler());
 	}
 
-	shaderc_allocated = false;
+	g_shaderc_allocated = false;
 }
 
 tfx_stats tfx_frame() {
@@ -1266,32 +1284,31 @@ tfx_stats tfx_frame() {
 
 	//CHECK(tfx_glEnable(GL_FRAMEBUFFER_SRGB));
 
-#ifdef TFX_MODERN
 	GLuint vao;
-	CHECK(tfx_glGenVertexArrays(1, &vao));
-	CHECK(tfx_glBindVertexArray(vao));
-#endif
+	if (tfx_glGenVertexArrays && tfx_glBindVertexArray) {
+		CHECK(tfx_glGenVertexArrays(1, &vao));
+		CHECK(tfx_glBindVertexArray(vao));
+	}
 
-	if (transient_buffer.offset > 0) {
-		CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, transient_buffer.buf.gl_id));
+	if (g_transient_buffer.offset > 0) {
+		CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, g_transient_buffer.buf.gl_id));
 		if (tfx_glMapBufferRange && tfx_glUnmapBuffer) {
-			void *ptr = tfx_glMapBufferRange(GL_ARRAY_BUFFER, 0, transient_buffer.offset, GL_MAP_WRITE_BIT);
+			void *ptr = tfx_glMapBufferRange(GL_ARRAY_BUFFER, 0, g_transient_buffer.offset, GL_MAP_WRITE_BIT);
 			if (ptr) {
-				memcpy(ptr, transient_buffer.data, transient_buffer.offset);
+				memcpy(ptr, g_transient_buffer.data, g_transient_buffer.offset);
 				CHECK(tfx_glUnmapBuffer(GL_ARRAY_BUFFER));
 			}
 		}
 		else {
-			CHECK(tfx_glBufferSubData(GL_ARRAY_BUFFER, 0, transient_buffer.offset, transient_buffer.data));
+			CHECK(tfx_glBufferSubData(GL_ARRAY_BUFFER, 0, g_transient_buffer.offset, g_transient_buffer.data));
 		}
 	}
 
 	for (int id = 0; id < VIEW_MAX; id++) {
-		tfx_view *view = &views[id];
+		tfx_view *view = &g_views[id];
 
 		GLuint program = 0;
-#ifdef TFX_COMPUTE
-		if (caps.compute) {
+		if (g_caps.compute) {
 			int cd = sb_count(view->jobs);
 			for (int i = 0; i < cd; i++) {
 				tfx_draw job = view->draws[i];
@@ -1319,7 +1336,6 @@ tfx_stats tfx_frame() {
 				CHECK(tfx_glDispatchCompute(job.threads_x, job.threads_y, job.threads_z));
 			}
 		}
-#endif
 
 		int nd = sb_count(view->draws);
 		if (nd == 0) {
@@ -1399,7 +1415,7 @@ tfx_stats tfx_frame() {
 				program = draw.program;
 			}
 			CHECK(tfx_glDepthMask((draw.flags & TFX_STATE_DEPTH_WRITE) > 0));
-			if (caps.multisample) {
+			if (g_caps.multisample) {
 				if (draw.flags & TFX_STATE_MSAA) {
 					CHECK(tfx_glEnable(GL_MULTISAMPLE));
 				}
@@ -1469,7 +1485,7 @@ tfx_stats tfx_frame() {
 				draw.callback();
 			}
 
-			if (!draw.vbo) {
+			if (!draw.use_vbo) {
 				continue;
 			}
 
@@ -1484,33 +1500,34 @@ tfx_stats tfx_frame() {
 				default: break; // unspecified = triangles.
 			}
 
-			GLuint vbo = draw.vbo->gl_id;
+			GLuint vbo = draw.vbo.gl_id;
 			assert(vbo != 0);
 
-#ifdef TFX_COMPUTE
-			if (draw.vbo->dirty) {
+			if (draw.vbo.dirty && tfx_glMemoryBarrier) {
 				CHECK(tfx_glMemoryBarrier(GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT));
-				draw.vbo->dirty = false;
+				draw.vbo.dirty = false;
 			}
-#endif
 
 			uint32_t va_offset = 0;
-			if (draw.tvb_fmt) {
-				draw.vbo->format = draw.tvb_fmt;
+			if (draw.use_tvb) {
+				draw.vbo.format = draw.tvb_fmt;
 				va_offset = draw.offset;
 			}
-			tfx_vertex_format *fmt = draw.vbo->format;
+			tfx_vertex_format *fmt = &draw.vbo.format;
 			assert(fmt != NULL);
+			assert(fmt->stride > 0);
 
 			CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, vbo));
 
-			int nc = 8;
+			int nc = fmt->count;
+			assert(nc < 8); // the mask is only 8 bits
+
 			int real = 0;
 			for (int i = 0; i < nc; i++) {
-				tfx_vertex_component vc = fmt->components[i];
-				if (!vc.size) {
+				if ((fmt->component_mask & (1 << i)) == 0) {
 					continue;
 				}
+				tfx_vertex_component vc = fmt->components[i];
 				GLenum gl_type = GL_FLOAT;
 				switch (vc.type) {
 					case TFX_TYPE_SKIP: continue;
@@ -1540,18 +1557,26 @@ tfx_stats tfx_frame() {
 				}
 			}
 
-			if (draw.ibo) {
-#ifdef TFX_COMPUTE
-				if (draw.ibo->dirty) {
+			if (draw.use_ibo) {
+				if (draw.ibo.dirty && tfx_glMemoryBarrier) {
 					CHECK(tfx_glMemoryBarrier(GL_ELEMENT_ARRAY_BARRIER_BIT));
-					draw.ibo->dirty = false;
+					draw.ibo.dirty = false;
 				}
-#endif
-				CHECK(tfx_glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, draw.ibo->gl_id));
-				CHECK(tfx_glDrawElementsInstanced(mode, draw.indices, GL_UNSIGNED_SHORT, (GLvoid*)draw.offset, 1));
+				CHECK(tfx_glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, draw.ibo.gl_id));
+				if (tfx_glDrawElementsInstanced) {
+					CHECK(tfx_glDrawElementsInstanced(mode, draw.indices, GL_UNSIGNED_SHORT, (GLvoid*)draw.offset, 1));
+				}
+				else {
+					CHECK(tfx_glDrawElements(mode, draw.indices, GL_UNSIGNED_SHORT, (GLvoid*)draw.offset));
+				}
 			}
 			else {
-				CHECK(tfx_glDrawArraysInstanced(mode, 0, (GLsizei)draw.indices, 1));
+				if (tfx_glDrawArraysInstanced) {
+					CHECK(tfx_glDrawArraysInstanced(mode, 0, (GLsizei)draw.indices, 1));
+				}
+				else {
+					CHECK(tfx_glDrawArrays(mode, 0, (GLsizei)draw.indices));
+				}
 			}
 		}
 
@@ -1569,17 +1594,17 @@ tfx_stats tfx_frame() {
 
 	tvb_reset();
 
-	sb_free(uniforms);
-	uniforms = NULL;
+	sb_free(g_uniforms);
+	g_uniforms = NULL;
 
-	ub_cursor = uniform_buffer;
+	g_ub_cursor = g_uniform_buffer;
 
 	CHECK(tfx_glDisable(GL_SCISSOR_TEST));
 	CHECK(tfx_glColorMask(true, true, true, true));
 
-#ifdef TFX_MODERN
-	CHECK(tfx_glDeleteVertexArrays(1, &vao));
-#endif
+	if (tfx_glDeleteVertexArrays) {
+		CHECK(tfx_glDeleteVertexArrays(1, &vao));
+	}
 
 	return stats;
 }
