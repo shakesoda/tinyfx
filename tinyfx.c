@@ -666,6 +666,9 @@ tfx_program tfx_program_new(const char *_vss, const char *_fss, const char *attr
 		return 0;
 	}
 
+	free(vss);
+	free(fss);
+
 	CHECK(tfx_glAttachShader(program, vs));
 	CHECK(tfx_glAttachShader(program, fs));
 
