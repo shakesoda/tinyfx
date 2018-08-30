@@ -191,6 +191,9 @@ typedef struct tfx_caps {
 	bool compute;
 	bool float_canvas;
 	bool multisample;
+	bool debug_marker;
+	bool debug_output;
+	bool memory_info;
 } tfx_caps;
 
 // TODO
@@ -215,9 +218,11 @@ TFX_API tfx_transient_buffer tfx_transient_buffer_new(tfx_vertex_format *fmt, ui
 TFX_API tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tfx_buffer_usage usage);
 
 TFX_API tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, tfx_format format, uint16_t flags);
+TFX_API tfx_texture tfx_get_texture(tfx_canvas *canvas);
 
 TFX_API tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format);
 
+TFX_API void tfx_view_set_name(uint8_t id, const char *name);
 TFX_API void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas);
 TFX_API void tfx_view_set_clear_color(uint8_t id, int color);
 TFX_API void tfx_view_set_clear_depth(uint8_t id, float depth);

@@ -27,6 +27,11 @@
 #define assert(op) (void)(op);
 #endif
 
+// needed on msvc
+#ifndef snprintf
+#define snprintf _snprintf
+#endif
+
 #ifndef TFX_UNIFORM_BUFFER_SIZE
 // by default, allow up to 8MB of uniform updates per frame.
 #define TFX_UNIFORM_BUFFER_SIZE 1024*1024*8
@@ -153,6 +158,8 @@ typedef struct tfx_draw {
 typedef struct tfx_view {
 	uint32_t flags;
 
+	const char *name;
+
 	tfx_canvas *canvas;
 	tfx_draw    *draws;
 	tfx_draw    *jobs;
@@ -189,6 +196,10 @@ static tfx_glext available_exts[] = {
 	{ "GL_ARB_multisample", false },
 	{ "GL_ARB_compute_shader", false },
 	{ "GL_ARB_texture_float", false },
+	{ "GL_EXT_debug_marker", false },
+	{ "GL_ARB_debug_output", false },
+	{ "GL_KHR_debug", false },
+	{ "GL_NVX_gpu_memory_info", false },
 	{ NULL, false }
 };
 
@@ -267,6 +278,12 @@ PFNGLDRAWARRAYSINSTANCEDPROC tfx_glDrawArraysInstanced;
 PFNGLDRAWELEMENTSPROC tfx_glDrawElements;
 PFNGLDRAWARRAYSPROC tfx_glDrawArrays;
 PFNGLDELETEVERTEXARRAYSPROC tfx_glDeleteVertexArrays;
+PFNGLBINDFRAGDATALOCATIONPROC tfx_glBindFragDataLocation;
+
+// debug output/markers
+PFNGLPUSHDEBUGGROUPPROC tfx_glPushDebugGroup;
+PFNGLPOPDEBUGGROUPPROC tfx_glPopDebugGroup;
+PFNGLINSERTEVENTMARKEREXTPROC tfx_glInsertEventMarkerEXT;
 
 void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glGetString = get_proc_address("glGetString");
@@ -344,6 +361,11 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glDrawElements = get_proc_address("glDrawElements");
 	tfx_glDrawArrays = get_proc_address("glDrawArrays");
 	tfx_glDeleteVertexArrays = get_proc_address("glDeleteVertexArrays");
+	tfx_glBindFragDataLocation = get_proc_address("glBindFragDataLocation");
+
+	tfx_glPushDebugGroup = get_proc_address("glPushDebugGroup");
+	tfx_glPopDebugGroup = get_proc_address("glPopDebugGroup");
+	tfx_glInsertEventMarkerEXT = get_proc_address("glInsertEventMarkerEXT");
 }
 
 tfx_caps tfx_get_caps() {
@@ -356,6 +378,10 @@ tfx_caps tfx_get_caps() {
 
 		for (int i = 0; i < ext_count; i++) {
 			const char *search = (const char*)CHECK(tfx_glGetStringi(GL_EXTENSIONS, i));
+#if _MSC_VER && 0
+			OutputDebugString(search);
+			OutputDebugString("\n");
+#endif
 			for (int j = 0;; j++) {
 				tfx_glext *tmp = &available_exts[j];
 				if (!tmp->ext) {
@@ -401,6 +427,9 @@ tfx_caps tfx_get_caps() {
 	caps.multisample = available_exts[0].supported;
 	caps.compute = available_exts[1].supported;
 	caps.float_canvas = available_exts[2].supported;
+	caps.debug_marker = available_exts[3].supported || available_exts[5].supported;
+	caps.debug_output = available_exts[4].supported;
+	caps.memory_info = available_exts[6].supported;
 
 	return caps;
 }
@@ -549,6 +578,17 @@ void tfx_reset(uint16_t width, uint16_t height) {
 		tvb_reset();
 	}
 
+#ifdef _MSC_VER
+	if (g_caps.memory_info) {
+		GLint memory;
+		// GPU_MEMORY_INFO_TOTAL_AVAILABLE_MEMORY_NVX    
+		CHECK(tfx_glGetIntegerv(0x9048, &memory));
+		char buf[64];
+		snprintf(buf, 64, "VRAM: %dMiB\n", memory / 1024);
+		OutputDebugString(buf);
+	}
+#endif
+
 	memset(&g_views, 0, sizeof(tfx_view)*VIEW_MAX);
 }
 
@@ -589,6 +629,18 @@ void tfx_shutdown() {
 
 static bool g_shaderc_allocated = false;
 
+static void push_group(unsigned id, const char *label) {
+	if (tfx_glPushDebugGroup) {
+		CHECK(tfx_glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, id, strlen(label), label));
+	}
+}
+
+static void pop_group() {
+	if (tfx_glPopDebugGroup) {
+		CHECK(tfx_glPopDebugGroup());
+	}
+}
+
 static GLuint load_shader(GLenum type, const char *shaderSrc) {
 	g_shaderc_allocated = true;
 
@@ -610,9 +662,13 @@ static GLuint load_shader(GLenum type, const char *shaderSrc) {
 			char* infoLog = (char*)malloc(sizeof(char) * infoLen);
 			CHECK(tfx_glGetShaderInfoLog(shader, infoLen, NULL, infoLog));
 			fprintf(stderr, "Error compiling shader:\n%s\n", infoLog);
+#ifdef _MSC_VER
+			OutputDebugString(infoLog);
+#endif
 			free(infoLog);
 		}
 		CHECK(tfx_glDeleteShader(shader));
+		assert(compiled);
 		return 0;
 	}
 
@@ -689,6 +745,11 @@ tfx_program tfx_program_new(const char *_vss, const char *_fss, const char *attr
 		CHECK(tfx_glBindAttribLocation(program, i, *it));
 		i++;
 		it++;
+	}
+
+	// TODO: accept frag data binding array
+	if (tfx_glBindFragDataLocation) {
+		//CHECK(tfx_glBindFragDataLocation(program, 0, "out_color"));
 	}
 
 	CHECK(tfx_glLinkProgram(program));
@@ -1003,6 +1064,11 @@ void tfx_view_set_transform(uint8_t id, float *_view, float *proj_l, float *proj
 	memcpy(view->proj_right, proj_r, sizeof(float)*16);
 }
 
+void tfx_view_set_name(uint8_t id, const char *name) {
+	tfx_view *view = &g_views[id];
+	view->name = name;
+}
+
 void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas) {
 	tfx_view *view = &g_views[id];
 	assert(view != NULL);
@@ -1117,6 +1183,18 @@ void tfx_set_texture(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot) {
 
 	assert(tex->gl_id > 0);
 	g_tmp_draw.textures[slot] = tex;
+}
+
+tfx_texture tfx_get_texture(tfx_canvas *canvas) {
+	tfx_texture tex;
+	memset(&tex, 0, sizeof(tfx_texture));
+
+	tex.format = canvas->format;
+	tex.gl_id = canvas->gl_id;
+	tex.width = canvas->width;
+	tex.height = canvas->height;
+
+	return tex;
 }
 
 void tfx_set_state(uint64_t flags) {
@@ -1333,6 +1411,10 @@ tfx_stats tfx_frame() {
 	 * a good while, since that should only be done during init/loading. */
 	release_compiler();
 
+	if (g_caps.debug_output) {
+		CHECK(tfx_glEnable(GL_DEBUG_OUTPUT));
+	}
+
 	tfx_stats stats;
 	memset(&stats, 0, sizeof(tfx_stats));
 
@@ -1345,6 +1427,10 @@ tfx_stats tfx_frame() {
 		CHECK(tfx_glGenVertexArrays(1, &vao));
 		CHECK(tfx_glBindVertexArray(vao));
 	}
+
+	unsigned debug_id = 0;
+
+	push_group(debug_id++, "Update Transient Buffers");
 
 	if (g_transient_buffer.offset > 0) {
 		CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, g_transient_buffer.buf.gl_id));
@@ -1360,12 +1446,34 @@ tfx_stats tfx_frame() {
 		}
 	}
 
+	pop_group();
+
+	char debug_label[256];
+
 	for (int id = 0; id < VIEW_MAX; id++) {
 		tfx_view *view = &g_views[id];
 
+		int nd = sb_count(view->draws);
+		int cd = sb_count(view->jobs);
+		if (nd == 0 && cd == 0) {
+			continue;
+		}
+
+		if (view->name) {
+			snprintf(debug_label, 256, "%s (%d)", view->name, id);
+		}
+		else {
+			snprintf(debug_label, 256, "View %d", id);
+		}
+		push_group(debug_id++, debug_label);
+
 		GLuint program = 0;
 		if (g_caps.compute) {
-			int cd = sb_count(view->jobs);
+			if (cd > 0) {
+				// split compute into its own section because it is infrequently used.
+				// helpful in renderdoc captures.
+				push_group(debug_id++, "Compute");
+			}
 			for (int i = 0; i < cd; i++) {
 				tfx_draw job = view->draws[i];
 				if (job.program != program) {
@@ -1391,10 +1499,13 @@ tfx_stats tfx_frame() {
 				}
 				CHECK(tfx_glDispatchCompute(job.threads_x, job.threads_y, job.threads_z));
 			}
+			if (cd > 0) {
+				pop_group();
+			}
 		}
 
-		int nd = sb_count(view->draws);
 		if (nd == 0) {
+			pop_group();
 			continue;
 		}
 
@@ -1405,7 +1516,7 @@ tfx_stats tfx_frame() {
 		int nb = sb_count(view->blits);
 		stats.blits += nb;
 
-		// TODO: fast blit path for ES3+
+		// TODO: blit support
 
 		CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, canvas->gl_id));
 		CHECK(tfx_glViewport(0, 0, canvas->width, canvas->height));
@@ -1646,6 +1757,8 @@ tfx_stats tfx_frame() {
 
 		sb_free(view->blits);
 		view->blits = NULL;
+
+		pop_group();
 	}
 
 	reset();
