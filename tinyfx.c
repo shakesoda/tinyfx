@@ -5,6 +5,11 @@
 #define TFX_DEBUG
 #include "tinyfx.h"
 
+#ifdef TFX_LEAK_CHECK
+#define STB_LEAKCHECK_IMPLEMENTATION
+#include "stb_leakcheck.h"
+#endif
+
 /**********************\
 | implementation stuff |
 \**********************/
@@ -536,7 +541,12 @@ void tfx_reset(uint16_t width, uint16_t height) {
 	memset(&g_views, 0, sizeof(tfx_view)*VIEW_MAX);
 }
 
+static tfx_program *g_programs = NULL;
+static tfx_draw tmp_draw;
+
 void tfx_shutdown() {
+	tfx_frame();
+
 	// TODO: clean up all GL objects, allocs, etc.
 	free(g_uniform_buffer);
 	g_uniform_buffer = NULL;
@@ -553,6 +563,17 @@ void tfx_shutdown() {
 		sb_free(g_uniforms);
 		g_uniforms = NULL;
 	}
+
+	tfx_glUseProgram(0);
+	int np = sb_count(g_programs);
+	for (int i = 0; i < np; i++) {
+		tfx_glDeleteProgram(g_programs[i]);
+	}
+	g_programs = NULL;
+
+#ifdef TFX_LEAK_CHECK
+	stb_leakcheck_dumpmem();
+#endif
 }
 
 static bool g_shaderc_allocated = false;
@@ -589,11 +610,28 @@ static GLuint load_shader(GLenum type, const char *shaderSrc) {
 
 #ifdef TFX_GLES
 const char *vs_prepend = "#version 100\n"
+	"#ifndef GL_ES\n"
+	"#define lowp\n"
+	"#define mediump\n"
+	"#define highp\n"
+	"#else\n"
 	"precision highp float;\n"
+	"#define in attribute\n"
+	"#define out varying\n"
+	"#endif\n"
+	"#pragma optionNV(strict on)\n"
 	"#line 1\n"
 ;
 const char *fs_prepend = "#version 100\n"
+	"#ifndef GL_ES\n"
+	"#define lowp\n"
+	"#define mediump\n"
+	"#define highp\n"
+	"#else\n"
 	"precision mediump float;\n"
+	"#define in varying\n"
+	"#endif\n"
+	"#pragma optionNV(strict on)\n"
 	"#line 1\n"
 ;
 #else
@@ -627,8 +665,6 @@ tfx_program tfx_program_new(const char *_vss, const char *_fss, const char *attr
 	if (!program) {
 		return 0;
 	}
-	free(vss);
-	free(fss);
 
 	CHECK(tfx_glAttachShader(program, vs));
 	CHECK(tfx_glAttachShader(program, fs));
@@ -661,6 +697,8 @@ tfx_program tfx_program_new(const char *_vss, const char *_fss, const char *attr
 	CHECK(tfx_glDeleteShader(vs));
 	CHECK(tfx_glDeleteShader(fs));
 
+	sb_push(g_programs, program);
+
 	return program;
 }
 
@@ -692,6 +730,8 @@ tfx_program tfx_program_cs_new(const char *css) {
 		return 0;
 	}
 	CHECK(tfx_glDeleteShader(cs));
+
+	sb_push(g_programs, program);
 
 	return program;
 }
@@ -726,7 +766,8 @@ size_t tfx_vertex_format_offset(tfx_vertex_format *fmt, uint8_t slot) {
 
 void tfx_vertex_format_end(tfx_vertex_format *fmt) {
 	size_t stride = 0;
-	for (int i = 0; i < 8; i++) {
+	int nc = fmt->count;
+	for (int i = 0; i < nc; i++) {
 		tfx_vertex_component *vc = &fmt->components[i];
 		size_t bytes = 0;
 		switch (vc->type) {
@@ -1152,6 +1193,7 @@ void ts_delete(nlist **hashtab) {
 			free(hashtab[i]);
 		}
 	}
+	free(hashtab);
 }
 
 static void push_uniforms(tfx_program program, tfx_draw *add_state) {
@@ -1578,6 +1620,8 @@ tfx_stats tfx_frame() {
 					CHECK(tfx_glDrawArrays(mode, 0, (GLsizei)draw.indices));
 				}
 			}
+
+			sb_free(draw.uniforms);
 		}
 
 		sb_free(view->jobs);

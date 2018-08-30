@@ -21,10 +21,9 @@ namespace tfx {
 		}
 	};
 
-	template <typename T>
 	struct Buffer {
 		tfx_buffer buffer;
-		// Buffer(std::vector<T> &data, VertexFormat fmt, tfx_buffer_usage usage = TFX_USAGE_STATIC) {
+		// Buffer(std::vector &data, VertexFormat fmt, tfx_buffer_usage usage = TFX_USAGE_STATIC) {
 		// 	this->buffer = tfx_buffer_new(&data[0], data.size()*sizeof(T), &fmt.fmt, usage);
 		// }
 		Buffer(tfx_buffer &buf) {
@@ -32,7 +31,6 @@ namespace tfx {
 		}
 	};
 
-	template <typename T>
 	struct TransientBuffer {
 		tfx_transient_buffer tvb;
 		TransientBuffer(VertexFormat &fmt, uint16_t num) {
@@ -74,6 +72,9 @@ namespace tfx {
 		inline void set_scissor(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
 			tfx_view_set_scissor(this->id, x, y, w, h);
 		}
+		// inline void set_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+		// 	tfx_view_set_rect(this->id, x, y, w, h);
+		// }
 		inline uint16_t get_width() {
 			return tfx_view_get_width(this->id);
 		}
@@ -108,6 +109,9 @@ namespace tfx {
 	inline tfx_caps get_caps() {
 		return tfx_get_caps();
 	}
+	inline uint32_t transient_buffer_get_available(const VertexFormat &fmt) {
+		return tfx_transient_buffer_get_available((tfx_vertex_format*)&fmt.fmt);
+	}
 	inline void touch(uint8_t id) {
 		tfx_touch(id);
 	}
@@ -136,20 +140,16 @@ namespace tfx {
 	inline void set_state(uint64_t flags) {
 		tfx_set_state(flags);
 	}
-	template <typename T>
-	inline void set_buffer(Buffer<T> &buf, uint8_t slot, bool write = false) {
+	inline void set_buffer(Buffer &buf, uint8_t slot, bool write = false) {
 		tfx_set_buffer(&buf.buffer, slot, write);
 	}
-	template <typename T>
-	inline void set_transient_buffer(TransientBuffer<T> &tvb) {
+	inline void set_transient_buffer(TransientBuffer &tvb) {
 		tfx_set_transient_buffer(tvb.tvb);
 	}
-	template <typename T>
-	inline void set_vertices(Buffer<T> &vbo, int count = 0) {
+	inline void set_vertices(Buffer &vbo, int count = 0) {
 		tfx_set_vertices(&vbo.buffer, count);
 	}
-	template <typename T>
-	inline void set_indices(Buffer<T> &ibo, int count) {
+	inline void set_indices(Buffer &ibo, int count) {
 		tfx_set_indices(&ibo.buffer, count);
 	}
 	inline void dispatch(uint8_t id, Program &program, uint32_t x, uint32_t y, uint32_t z) {
