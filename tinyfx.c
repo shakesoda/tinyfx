@@ -160,7 +160,8 @@ typedef struct tfx_view {
 
 	const char *name;
 
-	tfx_canvas *canvas;
+	bool has_canvas;
+	tfx_canvas  canvas;
 	tfx_draw    *draws;
 	tfx_draw    *jobs;
 	tfx_blit_op *blits;
@@ -1011,6 +1012,7 @@ tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format) {
 
 	GLenum status = CHECK(tfx_glCheckFramebufferStatus(GL_FRAMEBUFFER));
 	if (status != GL_FRAMEBUFFER_COMPLETE) {
+		assert(false);
 		// TODO: return something more error-y
 		return c;
 	}
@@ -1047,7 +1049,7 @@ tfx_uniform tfx_uniform_new(const char *name, tfx_uniform_type type, int count) 
 	return u;
 }
 
-void tfx_set_uniform(tfx_uniform *uniform, float *data) {
+void tfx_set_uniform(tfx_uniform *uniform, const float *data) {
 	uniform->data = g_ub_cursor;
 	memcpy(uniform->fdata, data, uniform->size);
 	g_ub_cursor += uniform->size;
@@ -1072,7 +1074,8 @@ void tfx_view_set_name(uint8_t id, const char *name) {
 void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas) {
 	tfx_view *view = &g_views[id];
 	assert(view != NULL);
-	view->canvas = canvas;
+	view->has_canvas = true;
+	view->canvas = *canvas;
 }
 
 void tfx_view_set_clear_color(uint8_t id, int color) {
@@ -1112,8 +1115,8 @@ uint16_t tfx_view_get_width(uint8_t id) {
 	tfx_view *view = &g_views[id];
 	assert(view != NULL);
 
-	if (view->canvas != NULL) {
-		return view->canvas->width;
+	if (view->has_canvas) {
+		return view->canvas.width;
 	}
 
 	return g_backbuffer.width;
@@ -1123,8 +1126,8 @@ uint16_t tfx_view_get_height(uint8_t id) {
 	tfx_view *view = &g_views[id];
 	assert(view != NULL);
 
-	if (view->canvas != NULL) {
-		return view->canvas->height;
+	if (view->has_canvas) {
+		return view->canvas.height;
 	}
 
 	return g_backbuffer.height;
@@ -1366,8 +1369,8 @@ void tfx_touch(uint8_t id) {
 
 static tfx_canvas *get_canvas(tfx_view *view) {
 	assert(view != NULL);
-	if (view->canvas != NULL) {
-		return view->canvas;
+	if (view->has_canvas) {
+		return &view->canvas;
 	}
 	return &g_backbuffer;
 }

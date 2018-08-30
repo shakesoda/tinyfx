@@ -240,7 +240,7 @@ TFX_API tfx_uniform tfx_uniform_new(const char *name, tfx_uniform_type type, int
 
 // TFX_API void tfx_set_transform(float *mtx, uint8_t count);
 TFX_API void tfx_set_transient_buffer(tfx_transient_buffer tb);
-TFX_API void tfx_set_uniform(tfx_uniform *uniform, float *data);
+TFX_API void tfx_set_uniform(tfx_uniform *uniform, const float *data);
 TFX_API void tfx_set_callback(tfx_draw_callback cb);
 TFX_API void tfx_set_state(uint64_t flags);
 TFX_API void tfx_set_scissor(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
