@@ -18,8 +18,6 @@
 // TODO: grab function pointers at runtime...
 // TODO: restore support for GL < 4.3
 #include <GL/glcorearb.h>
-#define TFX_MODERN 1
-#define TFX_COMPUTE 1
 
 #include <string.h>
 #include <stdio.h>
@@ -128,10 +126,8 @@ typedef struct tfx_draw {
 
 	// TODO: remove indirection
 	tfx_texture *textures[8];
-#ifdef TFX_COMPUTE
 	tfx_buffer *ssbos[8];
 	bool ssbo_write[8];
-#endif
 	tfx_buffer vbo;
 	bool use_vbo;
 
@@ -148,12 +144,10 @@ typedef struct tfx_draw {
 	uint16_t indices;
 	uint32_t depth;
 
-#ifdef TFX_COMPUTE
 	// for compute jobs
 	uint32_t threads_x;
 	uint32_t threads_y;
 	uint32_t threads_z;
-#endif
 } tfx_draw;
 
 typedef struct tfx_view {
@@ -198,9 +192,8 @@ static tfx_glext available_exts[] = {
 	{ NULL, false }
 };
 
-#define TFX_HELLA_DIY
-#ifdef TFX_HELLA_DIY
 PFNGLGETSTRINGPROC tfx_glGetString;
+PFNGLGETSTRINGIPROC tfx_glGetStringi;
 PFNGLGETERRORPROC tfx_glGetError;
 PFNGLBLENDFUNCPROC tfx_glBlendFunc;
 PFNGLCOLORMASKPROC tfx_glColorMask;
@@ -277,6 +270,7 @@ PFNGLDELETEVERTEXARRAYSPROC tfx_glDeleteVertexArrays;
 
 void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glGetString = get_proc_address("glGetString");
+	tfx_glGetStringi = get_proc_address("glGetStringi");
 	tfx_glGetError = get_proc_address("glGetError");
 	tfx_glBlendFunc = get_proc_address("glBlendFunc");
 	tfx_glColorMask = get_proc_address("glColorMask");
@@ -352,22 +346,30 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glDeleteVertexArrays = get_proc_address("glDeleteVertexArrays");
 }
 
-#endif
-
 tfx_caps tfx_get_caps() {
 	tfx_caps caps;
 	memset(&caps, 0, sizeof(tfx_caps));
 
-	// TODO: GL core needs glGetStringi
-#if defined(TFX_MODERN)
-	caps.compute = true;
-	caps.float_canvas = true;
-	caps.multisample = true;
-	return caps;
-#endif
+	if (tfx_glGetStringi) {
+		GLint ext_count = 0;
+		CHECK(tfx_glGetIntegerv(GL_NUM_EXTENSIONS, &ext_count));
 
-	if (tfx_glGetString) {
-		const char *real = (char*)CHECK(tfx_glGetString(GL_EXTENSIONS));
+		for (int i = 0; i < ext_count; i++) {
+			const char *search = (const char*)CHECK(tfx_glGetStringi(GL_EXTENSIONS, i));
+			for (int j = 0;; j++) {
+				tfx_glext *tmp = &available_exts[j];
+				if (!tmp->ext) {
+					break;
+				}
+				if (strcmp(tmp->ext, search) == 0) {
+					tmp->supported = true;
+					break;
+				}
+			}
+		}
+	}
+	else if (tfx_glGetString) {
+		const char *real = (const char*)CHECK(tfx_glGetString(GL_EXTENSIONS));
 		char *exts = strdup(real);
 		char *pch = strtok(exts, " ");
 		int len = 0;
@@ -397,9 +399,7 @@ tfx_caps tfx_get_caps() {
 	}
 
 	caps.multisample = available_exts[0].supported;
-#ifdef TFX_COMPUTE
 	caps.compute = available_exts[1].supported;
-#endif
 	caps.float_canvas = available_exts[2].supported;
 
 	return caps;
@@ -420,16 +420,27 @@ void tfx_dump_caps() {
 	printf("GL vendor: %s\n", tfx_glGetString(GL_VENDOR));
 	printf("GL version: %s\n", tfx_glGetString(GL_VERSION));
 
-	const char *real = (char*)CHECK(tfx_glGetString(GL_EXTENSIONS));
-	char *exts = strdup(real);
-	int len = 0;
-
 	puts("GL extensions:");
-	char *pch = strtok(exts, " ");
-	while (pch != NULL) {
-		printf("\t%s\n", pch);
-		pch = strtok(NULL, " ");
-		len++;
+	if (tfx_glGetStringi) {
+		GLint ext_count = 0;
+		CHECK(tfx_glGetIntegerv(GL_NUM_EXTENSIONS, &ext_count));
+
+		for (int i = 0; i < ext_count; i++) {
+			const char *real = (const char*)CHECK(tfx_glGetStringi(GL_EXTENSIONS, i));
+			printf("\t%s\n", real);
+		}
+	}
+	else if (tfx_glGetString) {
+		const char *real = (const char*)CHECK(tfx_glGetString(GL_EXTENSIONS));
+		char *exts = strdup(real);
+		int len = 0;
+
+		char *pch = strtok(exts, " ");
+		while (pch != NULL) {
+			printf("\t%s\n", pch);
+			pch = strtok(NULL, " ");
+			len++;
+		}
 	}
 
 	puts("TinyFX renderer: "
@@ -465,10 +476,6 @@ static tfx_platform_data g_platform_data;
 
 static void tvb_reset() {
 	g_transient_buffer.offset = 0;
-
-	if (g_platform_data.gl_get_proc_address != NULL) {
-		load_em_up(g_platform_data.gl_get_proc_address);
-	}
 
 	if (!g_transient_buffer.buf.gl_id) {
 		GLuint id;
@@ -519,6 +526,10 @@ uint32_t tfx_transient_buffer_get_available(tfx_vertex_format *fmt) {
 }
 
 void tfx_reset(uint16_t width, uint16_t height) {
+	if (g_platform_data.gl_get_proc_address != NULL) {
+		load_em_up(g_platform_data.gl_get_proc_address);
+	}
+
 	g_caps = tfx_get_caps();
 
 	memset(&g_backbuffer, 0, sizeof(tfx_canvas));
