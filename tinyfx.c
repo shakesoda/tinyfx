@@ -706,8 +706,8 @@ tfx_vertex_format tfx_vertex_format_start() {
 void tfx_vertex_format_add(tfx_vertex_format *fmt, uint8_t slot, size_t count, bool normalized, tfx_component_type type) {
 	assert(type >= 0 && type <= TFX_TYPE_SKIP);
 
-	if (slot > fmt->count) {
-		fmt->count = slot;
+	if (slot >= fmt->count) {
+		fmt->count = slot + 1;
 	}
 	tfx_vertex_component *component = &fmt->components[slot];
 	memset(component, 0, sizeof(tfx_vertex_component));
