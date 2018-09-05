@@ -2,12 +2,18 @@
 #include "demo_util.h"
 
 static void run(state_t *state) {
+	tfx_platform_data pd;
+	pd.use_gles = true;
+	pd.context_version = 20;
+	pd.gl_get_proc_address = SDL_GL_GetProcAddress;
+	tfx_set_platform_data(pd);
 	tfx_reset(state->width, state->height);
 
 	uint8_t back = 1;
 	tfx_view_set_clear_color(back, 0x555555ff);
 	tfx_view_set_clear_depth(back, 1.0);
 	tfx_view_set_depth_test(back, TFX_DEPTH_TEST_LT);
+	tfx_view_set_name(back, "Forward Pass");
 
 	const char *vss = ""
 		"in vec3 a_position;\n"
@@ -40,8 +46,8 @@ static void run(state_t *state) {
 	};
 
 	tfx_vertex_format fmt = tfx_vertex_format_start();
-	tfx_vertex_format_add(&fmt, 3, false, TFX_TYPE_FLOAT);
-	tfx_vertex_format_add(&fmt, 4, true, TFX_TYPE_FLOAT);
+	tfx_vertex_format_add(&fmt, 0, 3, false, TFX_TYPE_FLOAT);
+	tfx_vertex_format_add(&fmt, 1, 4, true, TFX_TYPE_FLOAT);
 	tfx_vertex_format_end(&fmt);
 
 	tfx_buffer vbo = tfx_buffer_new(verts, sizeof(verts), &fmt, TFX_USAGE_STATIC);
@@ -50,7 +56,7 @@ static void run(state_t *state) {
 		tfx_touch(back);
 
 		tfx_set_vertices(&vbo, 3);
-		tfx_set_state(0);
+		tfx_set_state(TFX_STATE_RGB_WRITE | TFX_STATE_ALPHA_WRITE);
 		tfx_submit(back, prog, false);
 
 		tfx_frame();
