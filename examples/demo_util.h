@@ -75,6 +75,9 @@ typedef void (APIENTRY *DEBUGMSG)(DEBUGPROC callback, const void* userParam);
 DEBUGMSG glDebugMessageCallback = 0;
 
 static void debug_spew(GLenum s, GLenum t, GLuint id, GLenum sev, GLsizei len, const GLchar *msg, void *p) {
+	if (sev == GL_DEBUG_SEVERITY_NOTIFICATION || sev == GL_DEBUG_SEVERITY_LOW) {
+		return;
+	}
 	printf("GL DEBUG: %s\n", msg);
 }
 
