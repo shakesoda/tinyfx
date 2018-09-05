@@ -28,7 +28,7 @@
 #endif
 
 // needed on msvc
-#ifndef snprintf
+#if _MSC_VER && !defined(snprintf)
 #define snprintf _snprintf
 #endif
 
@@ -104,7 +104,11 @@ static void * stb__sbgrowf(void *arr, int increment, int itemsize)
 #endif // STB_STRETCHY_BUFFER_H_INCLUDED
 //////////////////////////////////////////////////////////////////////////////
 
+#ifdef TFX_DEBUG
 #define CHECK(fn) fn; { GLenum _status; while ((_status = tfx_glGetError())) { if (_status == GL_NO_ERROR) break; printf("%s:%d GL ERROR: %d\n", __FILE__, __LINE__, _status); } }
+#else
+#define CHECK(fn) fn;
+#endif
 
 #define VIEW_MAX 256
 
@@ -517,6 +521,12 @@ static void tvb_reset() {
 }
 
 void tfx_set_platform_data(tfx_platform_data pd) {
+	// supported: GL > 3, 2.1, ES 2.0, ES 3.0+
+	assert(0
+		|| (pd.context_version >= 30)
+		|| (pd.use_gles && pd.context_version == 20)
+		|| (!pd.use_gles && pd.context_version == 21)
+	);
 	memcpy(&g_platform_data, &pd, sizeof(tfx_platform_data));
 }
 
@@ -594,7 +604,6 @@ void tfx_reset(uint16_t width, uint16_t height) {
 }
 
 static tfx_program *g_programs = NULL;
-static tfx_draw tmp_draw;
 
 void tfx_shutdown() {
 	tfx_frame();
@@ -676,8 +685,7 @@ static GLuint load_shader(GLenum type, const char *shaderSrc) {
 	return shader;
 }
 
-#ifdef TFX_GLES
-const char *vs_prepend = "#version 100\n"
+const char *legacy_vs_prepend = ""
 	"#ifndef GL_ES\n"
 	"#define lowp\n"
 	"#define mediump\n"
@@ -690,7 +698,7 @@ const char *vs_prepend = "#version 100\n"
 	"#pragma optionNV(strict on)\n"
 	"#line 1\n"
 ;
-const char *fs_prepend = "#version 100\n"
+const char *legacy_fs_prepend = ""
 	"#ifndef GL_ES\n"
 	"#define lowp\n"
 	"#define mediump\n"
@@ -702,16 +710,14 @@ const char *fs_prepend = "#version 100\n"
 	"#pragma optionNV(strict on)\n"
 	"#line 1\n"
 ;
-#else
-const char *vs_prepend = "#version 430 core\n"
+const char *vs_prepend = ""
 	//"precision highp float;\n"
 	"#line 1\n"
 ;
-const char *fs_prepend = "#version 430 core\n"
+const char *fs_prepend = ""
 	//"precision mediump float;\n"
 	"#line 1\n"
 ;
-#endif
 
 static char *sappend(const char *left, const char *right) {
 	size_t ls = strlen(left);
@@ -724,8 +730,39 @@ static char *sappend(const char *left, const char *right) {
 }
 
 tfx_program tfx_program_new(const char *_vss, const char *_fss, const char *attribs[]) {
-	char *vss = sappend(vs_prepend, _vss);
-	char *fss = sappend(fs_prepend, _fss);
+	char *vss1, *fss1;
+	if (g_platform_data.context_version < 30) {
+		vss1 = sappend(legacy_vs_prepend, _vss);
+		fss1 = sappend(legacy_fs_prepend, _fss);
+	}
+	else {
+		vss1 = sappend(vs_prepend, _vss);
+		fss1 = sappend(fs_prepend, _fss);
+	}
+
+	char version[64];
+	int gl_major = g_platform_data.context_version / 10;
+	int gl_minor = g_platform_data.context_version % 10;
+	const char *suffix = " core";
+	// post GL3/GLES3, versions are sane, just fix suffix.
+	if (g_platform_data.use_gles && g_platform_data.context_version >= 30) {
+		suffix = " es";
+	}
+	// GL and GLES2 use GLSL 1xx versions
+	else if (g_platform_data.context_version < 30) {
+		suffix = "";
+		gl_major = 1;
+		// GL 2.1 -> GLSL 120
+		if (!g_platform_data.use_gles) {
+			gl_minor = 2;
+		}
+	}
+	snprintf(version, 64, "#version %d%d0%s\n", gl_major, gl_minor, suffix);
+
+	char *vss = sappend(version, vss1);
+	char *fss = sappend(version, fss1);
+	free(vss1);
+	free(fss1);
 
 	GLuint vs = load_shader(GL_VERTEX_SHADER, vss);
 	GLuint fs = load_shader(GL_FRAGMENT_SHADER, fss);

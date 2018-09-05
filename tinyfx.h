@@ -101,6 +101,8 @@ typedef enum tfx_uniform_type {
 } tfx_uniform_type;
 
 typedef struct tfx_platform_data {
+	bool use_gles;
+	int context_version;
 	void* (*gl_get_proc_address)(const char*);
 } tfx_platform_data;
 
