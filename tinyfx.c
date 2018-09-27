@@ -705,6 +705,8 @@ const char *legacy_vs_prepend = ""
 	"#define out varying\n"
 	"#endif\n"
 	"#pragma optionNV(strict on)\n"
+	"#define main _pain\n"
+	"#define tfx_viewport_count 1\n"
 	"#line 1\n"
 ;
 const char *legacy_fs_prepend = ""
@@ -720,12 +722,24 @@ const char *legacy_fs_prepend = ""
 	"#line 1\n"
 ;
 const char *vs_prepend = ""
-	//"precision highp float;\n"
+	"#define main _pain\n"
+	"#define tfx_viewport_count 1\n"
 	"#line 1\n"
 ;
 const char *fs_prepend = ""
-	//"precision mediump float;\n"
 	"#line 1\n"
+;
+
+const char *vs_append = ""
+	"#undef main\n"
+	"void main() {\n"
+	"	_pain();\n"
+	// TODO: enable extensions if GL < 4.1, add gl_Layer support for
+	// single pass cube/shadow cascade rendering
+	"#if 0\n"
+	"	gl_ViewportIndex = gl_InstanceID % tfx_viewport_count;\n"
+	"#endif\n"
+	"}\n"
 ;
 
 static char *sappend(const char *left, const char *right) {
@@ -768,9 +782,12 @@ tfx_program tfx_program_new(const char *_vss, const char *_fss, const char *attr
 	}
 	snprintf(version, 64, "#version %d%d0%s\n", gl_major, gl_minor, suffix);
 
-	char *vss = sappend(version, vss1);
-	char *fss = sappend(version, fss1);
+	char *vss2 = sappend(vss1, vs_append);
 	free(vss1);
+
+	char *vss = sappend(version, vss2);
+	char *fss = sappend(version, fss1);
+	free(vss2);
 	free(fss1);
 
 	GLuint vs = load_shader(GL_VERTEX_SHADER, vss);
