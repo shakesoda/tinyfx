@@ -126,7 +126,8 @@ typedef struct tfx_texture {
 } tfx_texture;
 
 typedef struct tfx_canvas {
-	unsigned gl_id;
+	unsigned gl_id[8]; // limit: 2x msaa + 2x non-msaa
+	uint32_t allocated;
 	uint16_t width;
 	uint16_t height;
 	tfx_format format;
@@ -220,7 +221,7 @@ TFX_API tfx_transient_buffer tfx_transient_buffer_new(tfx_vertex_format *fmt, ui
 TFX_API tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tfx_buffer_usage usage);
 
 TFX_API tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, tfx_format format, uint16_t flags);
-TFX_API tfx_texture tfx_get_texture(tfx_canvas *canvas);
+TFX_API tfx_texture tfx_get_texture(tfx_canvas *canvas, uint8_t index);
 
 TFX_API tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format);
 

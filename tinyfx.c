@@ -28,7 +28,7 @@
 #endif
 
 // needed on msvc
-#if _MSC_VER && !defined(snprintf)
+#if defined(_MSC_VER) && !defined(snprintf)
 #define snprintf _snprintf
 #endif
 
@@ -103,6 +103,14 @@ static void * stb__sbgrowf(void *arr, int increment, int itemsize)
 }
 #endif // STB_STRETCHY_BUFFER_H_INCLUDED
 //////////////////////////////////////////////////////////////////////////////
+
+static char *tfx_strdup(const char *src) {
+	size_t len = strlen(src) + 1;
+	char *s = malloc(len);
+	if (s == NULL)
+		return NULL;
+	return (char *)memcpy(s, src, len);
+}
 
 #ifdef TFX_DEBUG
 #define CHECK(fn) fn; { GLenum _status; while ((_status = tfx_glGetError())) { if (_status == GL_NO_ERROR) break; printf("%s:%d GL ERROR: %d\n", __FILE__, __LINE__, _status); } }
@@ -383,7 +391,7 @@ tfx_caps tfx_get_caps() {
 
 		for (int i = 0; i < ext_count; i++) {
 			const char *search = (const char*)CHECK(tfx_glGetStringi(GL_EXTENSIONS, i));
-#if _MSC_VER && 0
+#if defined(_MSC_VER) && 0
 			OutputDebugString(search);
 			OutputDebugString("\n");
 #endif
@@ -401,7 +409,7 @@ tfx_caps tfx_get_caps() {
 	}
 	else if (tfx_glGetString) {
 		const char *real = (const char*)CHECK(tfx_glGetString(GL_EXTENSIONS));
-		char *exts = strdup(real);
+		char *exts = tfx_strdup(real);
 		char *pch = strtok(exts, " ");
 		int len = 0;
 		const char **supported = NULL;
@@ -466,7 +474,7 @@ void tfx_dump_caps() {
 	}
 	else if (tfx_glGetString) {
 		const char *real = (const char*)CHECK(tfx_glGetString(GL_EXTENSIONS));
-		char *exts = strdup(real);
+		char *exts = tfx_strdup(real);
 		int len = 0;
 
 		char *pch = strtok(exts, " ");
@@ -573,7 +581,8 @@ void tfx_reset(uint16_t width, uint16_t height) {
 	g_caps = tfx_get_caps();
 
 	memset(&g_backbuffer, 0, sizeof(tfx_canvas));
-	g_backbuffer.gl_id = 0;
+	g_backbuffer.allocated = 1;
+	g_backbuffer.gl_id[0] = 0;
 	g_backbuffer.width = width;
 	g_backbuffer.height = height;
 
@@ -982,6 +991,7 @@ tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format) {
 	tfx_canvas c;
 	memset(&c, 0, sizeof(tfx_canvas));
 
+	c.allocated = 0;
 	c.width  = w;
 	c.height = h;
 	c.format = format;
@@ -1054,7 +1064,8 @@ tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format) {
 		return c;
 	}
 
-	c.gl_id = fbo;
+	c.gl_id[0] = fbo;
+	c.allocated += 1;
 
 	return c;
 }
@@ -1225,12 +1236,14 @@ void tfx_set_texture(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot) {
 	g_tmp_draw.textures[slot] = tex;
 }
 
-tfx_texture tfx_get_texture(tfx_canvas *canvas) {
+tfx_texture tfx_get_texture(tfx_canvas *canvas, uint8_t index) {
 	tfx_texture tex;
 	memset(&tex, 0, sizeof(tfx_texture));
 
+	assert(index < canvas->allocated);
+
 	tex.format = canvas->format;
-	tex.gl_id = canvas->gl_id;
+	tex.gl_id = canvas->gl_id[index];
 	tex.width = canvas->width;
 	tex.height = canvas->height;
 
@@ -1292,6 +1305,7 @@ unsigned ts_hash(const char *s) {
 }
 
 bool ts_lookup(nlist **hashtab, const char *s) {
+	assert(s);
 	struct nlist *np;
 	for (np = hashtab[ts_hash(s)]; np != NULL; np = np->next) {
 		if (strcmp(s, np->name) == 0) {
@@ -1308,14 +1322,13 @@ void ts_set(nlist **hashtab, const char *name) {
 
 	unsigned hashval = ts_hash(name);
 	nlist *np = malloc(sizeof(nlist));
-	np->name = strdup(name);
+	np->name = tfx_strdup(name);
 	np->next = hashtab[hashval];
 	hashtab[hashval] = np;
 }
 
 nlist **ts_new() {
-	nlist **hashtab = malloc(sizeof(nlist*)*TS_HASHSIZE);
-	memset(hashtab, 0, sizeof(nlist*)*TS_HASHSIZE);
+	nlist **hashtab = calloc(TS_HASHSIZE, sizeof(nlist*));
 	return hashtab;
 }
 
@@ -1558,7 +1571,14 @@ tfx_stats tfx_frame() {
 
 		// TODO: blit support
 
-		CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, canvas->gl_id));
+		// TODO: defer framebuffer creation
+
+		// this can currently only happen on error.
+		if (canvas->allocated == 0) {
+			pop_group();
+			continue;
+		}
+		CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, canvas->gl_id[0]));
 		CHECK(tfx_glViewport(0, 0, canvas->width, canvas->height));
 
 		if (view->flags & TFX_VIEW_SCISSOR) {
