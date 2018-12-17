@@ -985,6 +985,7 @@ nlist **ts_new() {
 void ts_delete(nlist **hashtab) {
 	for (int i = 0; i < TS_HASHSIZE; i++) {
 		if (hashtab[i] != NULL) {
+			free(hashtab[i]->name);
 			free(hashtab[i]);
 		}
 	}
