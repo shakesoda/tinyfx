@@ -141,9 +141,8 @@ typedef struct tfx_draw {
 	tfx_program program;
 	tfx_uniform *uniforms;
 
-	// TODO: remove indirection
-	tfx_texture *textures[8];
-	tfx_buffer *ssbos[8];
+	tfx_texture textures[8];
+	tfx_buffer ssbos[8];
 	bool ssbo_write[8];
 	tfx_buffer vbo;
 	bool use_vbo;
@@ -418,6 +417,7 @@ tfx_caps tfx_get_caps() {
 			pch = strtok(NULL, " ");
 			len++;
 		}
+		free(exts);
 
 		int n = sb_count(supported);
 		for (int i = 0; i < n; i++) {
@@ -483,6 +483,7 @@ void tfx_dump_caps() {
 			pch = strtok(NULL, " ");
 			len++;
 		}
+		free(exts);
 	}
 
 	puts("TinyFX renderer: "
@@ -722,11 +723,17 @@ const char *legacy_fs_prepend = ""
 	"#line 1\n"
 ;
 const char *vs_prepend = ""
+	"#ifdef GL_ES\n"
+	"precision highp float;\n"
+	"#endif\n"
 	"#define main _pain\n"
 	"#define tfx_viewport_count 1\n"
 	"#line 1\n"
 ;
 const char *fs_prepend = ""
+	"#ifdef GL_ES\n"
+	"precision mediump float;\n"
+	"#endif\n"
 	"#line 1\n"
 ;
 
@@ -1250,7 +1257,7 @@ void tfx_set_texture(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot) {
 	sb_push(g_uniforms, *uniform);
 
 	assert(tex->gl_id > 0);
-	g_tmp_draw.textures[slot] = tex;
+	g_tmp_draw.textures[slot] = *tex;
 }
 
 tfx_texture tfx_get_texture(tfx_canvas *canvas, uint8_t index) {
@@ -1274,7 +1281,7 @@ void tfx_set_state(uint64_t flags) {
 void tfx_set_buffer(tfx_buffer *buf, uint8_t slot, bool write) {
 	assert(slot <= 8);
 	assert(buf != NULL);
-	g_tmp_draw.ssbos[slot] = buf;
+	g_tmp_draw.ssbos[slot] = *buf;
 	g_tmp_draw.ssbo_write[slot] = write;
 }
 
@@ -1306,12 +1313,43 @@ void tfx_set_indices(tfx_buffer *ibo, int count) {
 	g_tmp_draw.indices = count;
 }
 
-// TODO: check that this works in real use...
+//GLint ex_uniform_map[256][256] = { 0 };
+//GLint ex_uniform_locations[256][256] = { 0 };
+//
+//static GLint ex_uniform(GLuint shader, const char *str) {
+//	const char *string = str;
+//	uint32_t key = 5381;
+//	int c;
+//
+//	// hash * 33 + c
+//	while (c = *str++)
+//		key = ((key << 5) + key) + c;
+//
+//	// check if location cached already
+//	int i = 0;
+//	for (i = 0; i<256; i++) {
+//		// end of array
+//		if (!ex_uniform_map[shader][i])
+//			break;
+//
+//		// check cached
+//		if (ex_uniform_map[shader][i] == key)
+//			return ex_uniform_locations[shader][i];
+//	}
+//
+//	// store and return it
+//	GLint value = tfx_glGetUniformLocation(shader, string);
+//	ex_uniform_map[shader][i] = key;
+//	ex_uniform_locations[shader][i] = value;
+//
+//	return value;
+//}
+
 #define TS_HASHSIZE 101
 
 typedef struct nlist {
 	struct nlist *next;
-	char *name;
+	const char *name;
 } nlist;
 
 unsigned ts_hash(const char *s) {
@@ -1328,6 +1366,7 @@ bool ts_lookup(nlist **hashtab, const char *s) {
 		if (strcmp(s, np->name) == 0) {
 			return true;
 		}
+		//printf("collision\n");
 	}
 	return false;
 }
@@ -1339,19 +1378,20 @@ void ts_set(nlist **hashtab, const char *name) {
 
 	unsigned hashval = ts_hash(name);
 	nlist *np = malloc(sizeof(nlist));
-	np->name = tfx_strdup(name);
+	//np->name = tfx_strdup(name);
+	np->name = name;
 	np->next = hashtab[hashval];
 	hashtab[hashval] = np;
 }
 
 nlist **ts_new() {
-	nlist **hashtab = calloc(TS_HASHSIZE, sizeof(nlist*));
-	return hashtab;
+	return calloc(sizeof(nlist*), TS_HASHSIZE);
 }
 
 void ts_delete(nlist **hashtab) {
 	for (int i = 0; i < TS_HASHSIZE; i++) {
 		if (hashtab[i] != NULL) {
+			//free(hashtab[i]->name);
 			free(hashtab[i]);
 		}
 	}
@@ -1552,8 +1592,8 @@ tfx_stats tfx_frame() {
 				}
 				// TODO: bind image textures
 				for (int i = 0; i < 8; i++) {
-					if (job.textures[i] != NULL) {
-						tfx_buffer *ssbo = job.ssbos[i];
+					if (job.textures[i].gl_id != 0) {
+						tfx_buffer *ssbo = &job.ssbos[i];
 						if (ssbo->dirty) {
 							CHECK(tfx_glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT));
 							ssbo->dirty = false;
@@ -1561,7 +1601,7 @@ tfx_stats tfx_frame() {
 						if (job.ssbo_write[i]) {
 							ssbo->dirty = true;
 						}
-						CHECK(tfx_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, i, job.ssbos[i]->gl_id));
+						CHECK(tfx_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, i, job.ssbos[i].gl_id));
 					}
 					else {
 						CHECK(tfx_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, i, 0));
@@ -1793,8 +1833,8 @@ tfx_stats tfx_frame() {
 			last_count = real;
 
 			for (int i = 0; i < 8; i++) {
-				tfx_texture *tex = draw.textures[i];
-				if (tex != NULL) {
+				tfx_texture *tex = &draw.textures[i];
+				if (tex->gl_id != 0) {
 					CHECK(tfx_glActiveTexture(GL_TEXTURE0 + i));
 					CHECK(tfx_glBindTexture(GL_TEXTURE_2D, tex->gl_id));
 					assert(tex->gl_id > 0);
