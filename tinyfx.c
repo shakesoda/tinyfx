@@ -32,6 +32,11 @@
 #define snprintf _snprintf
 #endif
 
+#ifdef _MSC_VER
+#pragma warning( push )
+#pragma warning( disable : 4996 )
+#endif
+
 #ifndef TFX_UNIFORM_BUFFER_SIZE
 // by default, allow up to 8MB of uniform updates per frame.
 #define TFX_UNIFORM_BUFFER_SIZE 1024*1024*8
@@ -109,14 +114,20 @@ static char *tfx_strdup(const char *src) {
 	char *s = malloc(len);
 	if (s == NULL)
 		return NULL;
+	// copy len includes the \0 terminator
 	return (char *)memcpy(s, src, len);
 }
 
 #ifdef TFX_DEBUG
-#define CHECK(fn) fn; { GLenum _status; while ((_status = tfx_glGetError())) { if (_status == GL_NO_ERROR) break; printf("%s:%d GL ERROR: %d\n", __FILE__, __LINE__, _status); } }
+#define CHECK(fn) fn; { GLenum _status; while ((_status = tfx_glGetError())) { if (_status == GL_NO_ERROR) break; TFX_ERROR("%s:%d GL ERROR: %d", __FILE__, __LINE__, _status); } }
 #else
 #define CHECK(fn) fn;
 #endif
+
+#define TFX_INFO(msg, ...) tfx_printf(TFX_SEVERITY_INFO, msg, __VA_ARGS__)
+#define TFX_WARN(msg, ...) tfx_printf(TFX_SEVERITY_WARNING, msg, __VA_ARGS__)
+#define TFX_ERROR(msg, ...) tfx_printf(TFX_SEVERITY_ERROR, msg, __VA_ARGS__)
+#define TFX_FATAL(msg, ...) tfx_printf(TFX_SEVERITY_FATAL, msg, __VA_ARGS__)
 
 #define VIEW_MAX 256
 
@@ -380,6 +391,25 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glInsertEventMarkerEXT = get_proc_address("glInsertEventMarkerEXT");
 }
 
+static tfx_platform_data g_platform_data;
+
+static void tfx_printf(tfx_severity severity, const char *fmt, ...) {
+	va_list args;
+	va_start(args, fmt);
+	char *buf = NULL;
+	int need = vsnprintf(buf, 0, fmt, args);
+	buf = malloc(need + 1);
+	buf[need] = '\0';
+	vsnprintf(buf, need, fmt, args);
+	g_platform_data.info_log(buf, severity);
+	free(buf);
+	va_end(args);
+}
+
+static void tfx_printb(tfx_severity severity, const char *k, bool v) {
+	tfx_printf(severity, "TinyFX %s: %s", k, v ? "true" : "false");
+}
+
 tfx_caps tfx_get_caps() {
 	tfx_caps caps;
 	memset(&caps, 0, sizeof(tfx_caps));
@@ -411,7 +441,7 @@ tfx_caps tfx_get_caps() {
 		char *exts = tfx_strdup(real);
 		char *pch = strtok(exts, " ");
 		int len = 0;
-		const char **supported = NULL;
+		char **supported = NULL;
 		while (pch != NULL) {
 			sb_push(supported, pch);
 			pch = strtok(NULL, " ");
@@ -447,10 +477,6 @@ tfx_caps tfx_get_caps() {
 	return caps;
 }
 
-static void tfx_printb(const char *k, bool v) {
-	printf("TinyFX %s: %s\n", k, v? "true" : "false");
-}
-
 void tfx_dump_caps() {
 	tfx_caps caps = tfx_get_caps();
 
@@ -458,18 +484,18 @@ void tfx_dump_caps() {
 	// It's not on the RPi, but since it's only a few lines of code...
 	int release_shader_c = 0;
 	tfx_glGetIntegerv(GL_SHADER_COMPILER, &release_shader_c);
-	printf("GL shader compiler control: %d\n", release_shader_c);
-	printf("GL vendor: %s\n", tfx_glGetString(GL_VENDOR));
-	printf("GL version: %s\n", tfx_glGetString(GL_VERSION));
+	TFX_INFO("GL shader compiler control: %d", release_shader_c);
+	TFX_INFO("GL vendor: %s", tfx_glGetString(GL_VENDOR));
+	TFX_INFO("GL version: %s", tfx_glGetString(GL_VERSION));
 
-	puts("GL extensions:");
+	TFX_INFO("GL extensions:");
 	if (tfx_glGetStringi) {
 		GLint ext_count = 0;
 		CHECK(tfx_glGetIntegerv(GL_NUM_EXTENSIONS, &ext_count));
 
 		for (int i = 0; i < ext_count; i++) {
 			const char *real = (const char*)CHECK(tfx_glGetStringi(GL_EXTENSIONS, i));
-			printf("\t%s\n", real);
+			TFX_INFO("\t%s", real);
 		}
 	}
 	else if (tfx_glGetString) {
@@ -479,25 +505,27 @@ void tfx_dump_caps() {
 
 		char *pch = strtok(exts, " ");
 		while (pch != NULL) {
-			printf("\t%s\n", pch);
+			TFX_INFO("\t%s", pch);
 			pch = strtok(NULL, " ");
 			len++;
 		}
 		free(exts);
 	}
 
-	puts("TinyFX renderer: "
+	#define FUG(V) "GLES" #V
+	const char *glver =
 	#ifdef TFX_USE_GLES // NYI
-#define FUG(V) "GLES" #V
 		FUG(TFX_USE_GLES/10)
 	#else
 		"GL4"
 	#endif
-	);
+	;
+	#undef FUG
+	TFX_INFO("TinyFX renderer: %s", glver);
 
-	tfx_printb("compute", caps.compute);
-	tfx_printb("fp canvas", caps.float_canvas);
-	tfx_printb("multisample", caps.multisample);
+	tfx_printb(TFX_SEVERITY_INFO, "compute", caps.compute);
+	tfx_printb(TFX_SEVERITY_INFO, "fp canvas", caps.float_canvas);
+	tfx_printb(TFX_SEVERITY_INFO, "multisample", caps.multisample);
 }
 
 // uniforms updated this frame
@@ -515,7 +543,10 @@ static struct {
 
 static tfx_caps g_caps;
 
-static tfx_platform_data g_platform_data;
+// fallback printf
+static void basic_log(const char *msg, tfx_severity level) {
+	printf("%s\n", msg);
+}
 
 static void tvb_reset() {
 	g_transient_buffer.offset = 0;
@@ -536,6 +567,9 @@ void tfx_set_platform_data(tfx_platform_data pd) {
 		|| (pd.use_gles && pd.context_version == 20)
 		|| (!pd.use_gles && pd.context_version == 21)
 	);
+	if (pd.info_log == NULL) {
+		pd.info_log = &basic_log;
+	}
 	memcpy(&g_platform_data, &pd, sizeof(tfx_platform_data));
 }
 
@@ -666,7 +700,7 @@ static GLuint load_shader(GLenum type, const char *shaderSrc) {
 
 	GLuint shader = CHECK(tfx_glCreateShader(type));
 	if (!shader) {
-		fprintf(stderr, "Something has gone horribly wrong, and we can't make shaders.\n");
+		TFX_FATAL("Something has gone horribly wrong, and we can't make shaders.");
 		return 0;
 	}
 
@@ -681,7 +715,7 @@ static GLuint load_shader(GLenum type, const char *shaderSrc) {
 		if (infoLen > 0) {
 			char* infoLog = (char*)malloc(sizeof(char) * infoLen);
 			CHECK(tfx_glGetShaderInfoLog(shader, infoLen, NULL, infoLog));
-			fprintf(stderr, "Error compiling shader:\n%s\n", infoLog);
+			TFX_ERROR("Error compiling shader:\n%s", infoLog);
 #ifdef _MSC_VER
 			OutputDebugString(infoLog);
 #endif
@@ -833,7 +867,7 @@ tfx_program tfx_program_new(const char *_vss, const char *_fss, const char *attr
 		if (infoLen > 0) {
 			char* infoLog = (char*)malloc(infoLen);
 			CHECK(tfx_glGetProgramInfoLog(program, infoLen, NULL, infoLog));
-			fprintf(stderr, "Error linking program:\n%s\n", infoLog);
+			TFX_ERROR("Error linking program:\n%s", infoLog);
 			free(infoLog);
 		}
 		CHECK(tfx_glDeleteProgram(program));
@@ -869,7 +903,7 @@ tfx_program tfx_program_cs_new(const char *css) {
 		if (infoLen > 0) {
 			char* infoLog = (char*)malloc(infoLen);
 			CHECK(tfx_glGetProgramInfoLog(program, infoLen, NULL, infoLog));
-			fprintf(stderr, "Error linking program:\n%s\n", infoLog);
+			TFX_ERROR("Error linking program:\n%s", infoLog);
 			free(infoLog);
 		}
 		CHECK(tfx_glDeleteProgram(program));
@@ -1366,7 +1400,7 @@ bool ts_lookup(nlist **hashtab, const char *s) {
 		if (strcmp(s, np->name) == 0) {
 			return true;
 		}
-		//printf("collision\n");
+		//TFX_WARN("collision\n");
 	}
 	return false;
 }
@@ -1898,5 +1932,14 @@ tfx_stats tfx_frame() {
 }
 #undef MAX_VIEW
 #undef CHECK
+
+#undef TFX_INFO
+#undef TFX_WARN
+#undef TFX_ERROR
+#undef TFX_FATAL
+
+#ifdef _MSC_VER
+#pragma warning( pop )
+#endif
 
 #endif // TFX_IMPLEMENTATION

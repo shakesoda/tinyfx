@@ -100,10 +100,18 @@ typedef enum tfx_uniform_type {
 	TFX_UNIFORM_MAT4
 } tfx_uniform_type;
 
+typedef enum tfx_severity {
+	TFX_SEVERITY_INFO,
+	TFX_SEVERITY_WARNING,
+	TFX_SEVERITY_ERROR,
+	TFX_SEVERITY_FATAL
+} tfx_severity;
+
 typedef struct tfx_platform_data {
 	bool use_gles;
 	int context_version;
 	void* (*gl_get_proc_address)(const char*);
+	void(*info_log)(const char* msg, tfx_severity level);
 } tfx_platform_data;
 
 typedef struct tfx_uniform {
