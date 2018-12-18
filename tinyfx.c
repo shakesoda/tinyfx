@@ -1,8 +1,8 @@
 #define TFX_IMPLEMENTATION
-// #define TFX_USE_GLES 31
-// #define TFX_USE_GL 32
-// #define TFX_USE_EPOXY 1
+#if !defined(TFX_DEBUG) && defined(_DEBUG)
+// enable tfx debug in msvc debug configurations.
 #define TFX_DEBUG
+#endif
 #include "tinyfx.h"
 
 #ifdef TFX_LEAK_CHECK
@@ -14,6 +14,10 @@
 | implementation stuff |
 \**********************/
 #ifdef TFX_IMPLEMENTATION
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 // TODO: grab function pointers at runtime...
 // TODO: restore support for GL < 4.3
@@ -528,10 +532,167 @@ void tfx_dump_caps() {
 	tfx_printb(TFX_SEVERITY_INFO, "multisample", caps.multisample);
 }
 
+// this is all definitely not the simplest way to deal with maps for uniform
+// caches, but it's the simplest way I know which handles collisions.
+#define TFX_HASHSIZE 101
+
+typedef struct tfx_set {
+	struct tfx_set *next;
+	const char *key;
+} tfx_set;
+
+static unsigned tfx_hash(const char *s) {
+	unsigned hashval;
+	for (hashval = 0; *s != '\0'; s++)
+		hashval = *s + 31 * hashval;
+	return hashval % TFX_HASHSIZE;
+}
+
+static unsigned tfx_nohash(unsigned id) {
+	return id % TFX_HASHSIZE;
+}
+
+static bool tfx_slookup(tfx_set **hashtab, const char *s) {
+#ifdef TFX_DEBUG
+	assert(s);
+#endif
+	struct tfx_set *np;
+	for (np = hashtab[tfx_hash(s)]; np != NULL; np = np->next) {
+		if (strcmp(s, np->key) == 0) {
+			return true;
+		}
+		//TFX_WARN("collision\n");
+	}
+	return false;
+}
+
+static void tfx_sset(tfx_set **hashtab, const char *name) {
+	if (tfx_slookup(hashtab, name)) {
+		return;
+	}
+
+	unsigned hashval = tfx_hash(name);
+	tfx_set *np = malloc(sizeof(tfx_set));
+	np->key = name;
+	np->next = hashtab[hashval];
+	hashtab[hashval] = np;
+}
+
+static tfx_set **tfx_set_new() {
+	return calloc(sizeof(tfx_set*), TFX_HASHSIZE);
+}
+
+static void tfx_set_delete(tfx_set **hashtab) {
+	for (int i = 0; i < TFX_HASHSIZE; i++) {
+		if (hashtab[i] != NULL) {
+			free(hashtab[i]);
+		}
+	}
+	free(hashtab);
+}
+
+typedef struct tfx_locmap {
+	struct tfx_locmap *next;
+	const char *key;
+	GLuint value; // uniform location
+} tfx_locmap;
+
+static tfx_locmap *tfx_loclookup(tfx_locmap **hashtab, const char *s) {
+#ifdef TFX_DEBUG
+	assert(s);
+#endif
+	struct tfx_locmap *np;
+	for (np = hashtab[tfx_hash(s)]; np != NULL; np = np->next) {
+		if (strcmp(s, np->key) == 0) {
+			return np;
+		}
+		//TFX_WARN("collision\n");
+	}
+	return NULL;
+}
+
+static tfx_locmap* tfx_locset(tfx_locmap **hashtab, const char *name, GLuint value) {
+	tfx_locmap *found = tfx_loclookup(hashtab, name);
+	if (found) {
+		return NULL;
+	}
+
+	unsigned hashval = tfx_hash(name);
+	tfx_locmap *np = malloc(sizeof(tfx_locmap));
+	np->key = name;
+	np->next = hashtab[hashval];
+	np->value = value;
+	hashtab[hashval] = np;
+	return np;
+}
+
+static tfx_locmap **tfx_locmap_new() {
+	return calloc(sizeof(tfx_locmap*), TFX_HASHSIZE);
+}
+
+static void tfx_locmap_delete(tfx_locmap **hashtab) {
+	for (int i = 0; i < TFX_HASHSIZE; i++) {
+		if (hashtab[i] != NULL) {
+			free(hashtab[i]);
+		}
+	}
+	free(hashtab);
+}
+
+typedef struct tfx_shadermap {
+	struct tfx_shadermap *next;
+	GLint key; // shader program
+	tfx_locmap **value;
+} tfx_shadermap;
+
+static tfx_shadermap *tfx_proglookup(tfx_shadermap **hashtab, GLint program) {
+#ifdef TFX_DEBUG
+	assert(program);
+#endif
+	struct tfx_shadermap *np;
+	for (np = hashtab[tfx_nohash(program)]; np != NULL; np = np->next) {
+		if (program == np->key) {
+			return np;
+		}
+		//TFX_WARN("collision\n");
+	}
+	return NULL;
+}
+
+static tfx_shadermap* tfx_progset(tfx_shadermap **hashtab, GLint program) {
+	tfx_shadermap *found = tfx_proglookup(hashtab, program);
+	if (found) {
+		return found;
+	}
+
+	unsigned hashval = tfx_nohash(program);
+	tfx_shadermap *np = malloc(sizeof(tfx_shadermap));
+	np->key = program;
+	np->next = hashtab[hashval];
+	np->value = tfx_locmap_new();
+	hashtab[hashval] = np;
+	return np;
+}
+
+static tfx_shadermap **tfx_progmap_new() {
+	return calloc(sizeof(tfx_shadermap*), TFX_HASHSIZE);
+}
+
+static void tfx_progmap_delete(tfx_shadermap **hashtab) {
+	for (int i = 0; i < TFX_HASHSIZE; i++) {
+		if (hashtab[i] != NULL) {
+			tfx_locmap_delete(hashtab[i]->value);
+			free(hashtab[i]);
+		}
+	}
+	free(hashtab);
+}
+
 // uniforms updated this frame
 static tfx_uniform *g_uniforms = NULL;
 static uint8_t *g_uniform_buffer = NULL;
 static uint8_t *g_ub_cursor = NULL;
+static tfx_shadermap **g_uniform_map = NULL;
 
 static tfx_view g_views[VIEW_MAX];
 
@@ -633,6 +794,10 @@ void tfx_reset(uint16_t width, uint16_t height) {
 		tvb_reset();
 	}
 
+	if (!g_uniform_map) {
+		g_uniform_map = tfx_progmap_new();
+	}
+
 #ifdef _MSC_VER
 	if (g_caps.memory_info) {
 		GLint memory;
@@ -661,6 +826,11 @@ void tfx_shutdown() {
 
 	if (g_transient_buffer.buf.gl_id) {
 		tfx_glDeleteBuffers(1, &g_transient_buffer.buf.gl_id);
+	}
+
+	if (g_uniform_map) {
+		tfx_progmap_delete(g_uniform_map);
+		g_uniform_map = NULL;
 	}
 
 	// this can happen if you shutdown before calling frame()
@@ -1347,117 +1517,49 @@ void tfx_set_indices(tfx_buffer *ibo, int count) {
 	g_tmp_draw.indices = count;
 }
 
-//GLint ex_uniform_map[256][256] = { 0 };
-//GLint ex_uniform_locations[256][256] = { 0 };
-//
-//static GLint ex_uniform(GLuint shader, const char *str) {
-//	const char *string = str;
-//	uint32_t key = 5381;
-//	int c;
-//
-//	// hash * 33 + c
-//	while (c = *str++)
-//		key = ((key << 5) + key) + c;
-//
-//	// check if location cached already
-//	int i = 0;
-//	for (i = 0; i<256; i++) {
-//		// end of array
-//		if (!ex_uniform_map[shader][i])
-//			break;
-//
-//		// check cached
-//		if (ex_uniform_map[shader][i] == key)
-//			return ex_uniform_locations[shader][i];
-//	}
-//
-//	// store and return it
-//	GLint value = tfx_glGetUniformLocation(shader, string);
-//	ex_uniform_map[shader][i] = key;
-//	ex_uniform_locations[shader][i] = value;
-//
-//	return value;
-//}
-
-#define TS_HASHSIZE 101
-
-typedef struct nlist {
-	struct nlist *next;
-	const char *name;
-} nlist;
-
-unsigned ts_hash(const char *s) {
-	unsigned hashval;
-	for (hashval = 0; *s != '\0'; s++)
-		hashval = *s + 31 * hashval;
-	return hashval % TS_HASHSIZE;
-}
-
-bool ts_lookup(nlist **hashtab, const char *s) {
-	assert(s);
-	struct nlist *np;
-	for (np = hashtab[ts_hash(s)]; np != NULL; np = np->next) {
-		if (strcmp(s, np->name) == 0) {
-			return true;
-		}
-		//TFX_WARN("collision\n");
-	}
-	return false;
-}
-
-void ts_set(nlist **hashtab, const char *name) {
-	if (ts_lookup(hashtab, name)) {
-		return;
-	}
-
-	unsigned hashval = ts_hash(name);
-	nlist *np = malloc(sizeof(nlist));
-	//np->name = tfx_strdup(name);
-	np->name = name;
-	np->next = hashtab[hashval];
-	hashtab[hashval] = np;
-}
-
-nlist **ts_new() {
-	return calloc(sizeof(nlist*), TS_HASHSIZE);
-}
-
-void ts_delete(nlist **hashtab) {
-	for (int i = 0; i < TS_HASHSIZE; i++) {
-		if (hashtab[i] != NULL) {
-			//free(hashtab[i]->name);
-			free(hashtab[i]);
-		}
-	}
-	free(hashtab);
-}
-
 static void push_uniforms(tfx_program program, tfx_draw *add_state) {
-	nlist **found = ts_new();
+	tfx_set **found = tfx_set_new();
 
-	// TODO: this entire thing could probably be much faster.
-	// TODO: look into caching uniform locations. never trust GL.
 	int n = sb_count(g_uniforms);
 	for (int i = n-1; i >= 0; i--) {
 		tfx_uniform uniform = g_uniforms[i];
-		GLint loc = CHECK(tfx_glGetUniformLocation(program, uniform.name));
-		if (loc >= 0) {
-			// only record the last update for a given uniform
-			if (!ts_lookup(found, uniform.name)) {
-				tfx_uniform found_uniform;
-				memcpy(&found_uniform, &uniform, sizeof(tfx_uniform));
 
-				found_uniform.data = g_ub_cursor;
-				memcpy(found_uniform.data, uniform.data, uniform.size);
-				g_ub_cursor += uniform.size;
+		tfx_shadermap *val = tfx_proglookup(g_uniform_map, program);
+		if (!val) {
+			val = tfx_progset(g_uniform_map, program);
+		}
+#ifdef TFX_DEBUG
+		assert(val);
+		assert(val->value);
+#endif
+		tfx_locmap **locmap = val->value;
+		tfx_locmap *locval = tfx_loclookup(locmap, uniform.name);
 
-				ts_set(found, uniform.name);
-				sb_push(add_state->uniforms, found_uniform);
+		if (!locval) {
+			GLint loc = CHECK(tfx_glGetUniformLocation(program, uniform.name));
+			if (loc >= 0) {
+				locval = tfx_locset(locmap, uniform.name, loc);
 			}
+			else {
+				continue;
+			}
+		}
+
+		// only record the last update for a given uniform
+		if (!tfx_slookup(found, uniform.name)) {
+			tfx_uniform found_uniform;
+			memcpy(&found_uniform, &uniform, sizeof(tfx_uniform));
+
+			found_uniform.data = g_ub_cursor;
+			memcpy(found_uniform.data, uniform.data, uniform.size);
+			g_ub_cursor += uniform.size;
+
+			tfx_sset(found, uniform.name);
+			sb_push(add_state->uniforms, found_uniform);
 		}
 	}
 
-	ts_delete(found);
+	tfx_set_delete(found);
 }
 
 void tfx_dispatch(uint8_t id, tfx_program program, uint32_t x, uint32_t y, uint32_t z) {
@@ -1782,7 +1884,15 @@ tfx_stats tfx_frame() {
 			int nu = sb_count(draw.uniforms);
 			for (int j = 0; j < nu; j++) {
 				tfx_uniform uniform = draw.uniforms[j];
-				GLint loc = CHECK(tfx_glGetUniformLocation(program, uniform.name));
+
+				tfx_shadermap *val = tfx_proglookup(g_uniform_map, program);
+				tfx_locmap **locmap = val->value;
+				tfx_locmap *locval = tfx_loclookup(locmap, uniform.name);
+#ifdef TFX_DEBUG
+				assert(locval);
+#endif
+
+				GLint loc = locval->value;
 				if (loc < 0) {
 					continue;
 				}
@@ -1819,7 +1929,9 @@ tfx_stats tfx_frame() {
 			}
 
 			GLuint vbo = draw.vbo.gl_id;
+#ifdef TFX_DEBUG
 			assert(vbo != 0);
+#endif
 
 			if (draw.vbo.dirty && tfx_glMemoryBarrier) {
 				CHECK(tfx_glMemoryBarrier(GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT));
@@ -1838,7 +1950,9 @@ tfx_stats tfx_frame() {
 			CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, vbo));
 
 			int nc = fmt->count;
+#ifdef TFX_DEBUG
 			assert(nc < 8); // the mask is only 8 bits
+#endif
 
 			int real = 0;
 			for (int i = 0; i < nc; i++) {
@@ -1871,7 +1985,9 @@ tfx_stats tfx_frame() {
 				if (tex->gl_id != 0) {
 					CHECK(tfx_glActiveTexture(GL_TEXTURE0 + i));
 					CHECK(tfx_glBindTexture(GL_TEXTURE_2D, tex->gl_id));
+#ifdef TFX_DEBUG
 					assert(tex->gl_id > 0);
+#endif
 				}
 			}
 
@@ -1940,6 +2056,10 @@ tfx_stats tfx_frame() {
 
 #ifdef _MSC_VER
 #pragma warning( pop )
+#endif
+
+#ifdef __cplusplus
+}
 #endif
 
 #endif // TFX_IMPLEMENTATION
