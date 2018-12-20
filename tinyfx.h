@@ -139,7 +139,8 @@ typedef struct tfx_texture {
 } tfx_texture;
 
 typedef struct tfx_canvas {
-	unsigned gl_id[8]; // limit: 2x msaa + 2x non-msaa
+	unsigned gl_fbo;
+	unsigned gl_ids[8]; // limit: 2x msaa + 2x non-msaa
 	uint32_t allocated;
 	uint16_t width;
 	uint16_t height;

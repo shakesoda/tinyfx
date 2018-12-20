@@ -22,7 +22,7 @@ extern "C" {
 // TODO: grab function pointers at runtime...
 // TODO: restore support for GL < 4.3
 #include <GL/glcorearb.h>
-
+#include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
 #ifdef TFX_DEBUG
@@ -407,7 +407,9 @@ static void tfx_printf(tfx_severity severity, const char *fmt, ...) {
 	va_list args;
 	va_start(args, fmt);
 	char *buf = NULL;
-	int need = vsnprintf(buf, 0, fmt, args);
+	int need = vsnprintf(buf, 0, fmt, args) + 1;
+	va_end(args);
+	va_start(args, fmt);
 	buf = malloc(need + 1);
 	buf[need] = '\0';
 	vsnprintf(buf, need, fmt, args);
@@ -505,7 +507,7 @@ void tfx_dump_caps() {
 	TFX_INFO("GL vendor: %s", tfx_glGetString(GL_VENDOR));
 	TFX_INFO("GL version: %s", tfx_glGetString(GL_VERSION));
 
-	TFX_INFO("GL extensions:");
+	TFX_INFO("%s", "GL extensions:");
 	if (tfx_glGetStringi) {
 		GLint ext_count = 0;
 		CHECK(tfx_glGetIntegerv(GL_NUM_EXTENSIONS, &ext_count));
@@ -795,7 +797,7 @@ void tfx_reset(uint16_t width, uint16_t height) {
 
 	memset(&g_backbuffer, 0, sizeof(tfx_canvas));
 	g_backbuffer.allocated = 1;
-	g_backbuffer.gl_id[0] = 0;
+	g_backbuffer.gl_fbo = 0;
 	g_backbuffer.width = width;
 	g_backbuffer.height = height;
 
@@ -893,7 +895,7 @@ static GLuint load_shader(GLenum type, const char *shaderSrc) {
 
 	GLuint shader = CHECK(tfx_glCreateShader(type));
 	if (!shader) {
-		TFX_FATAL("Something has gone horribly wrong, and we can't make shaders.");
+		TFX_FATAL("%s", "Something has gone horribly wrong, and we can't make shaders.");
 		return 0;
 	}
 
@@ -1336,12 +1338,15 @@ tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format) {
 	CHECK(tfx_glGenFramebuffers(1, &fbo));
 	CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, fbo));
 
+	int idx = 0;
+
 	// setup color buffer...
 	if (color_format) {
 		assert(internal != 0);
 
 		GLuint color;
 		CHECK(tfx_glGenTextures(1, &color));
+		c.gl_ids[idx++] = color;
 		CHECK(tfx_glBindTexture(GL_TEXTURE_2D, color));
 		CHECK(tfx_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, internal, color_format, NULL));
 		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST));
@@ -1365,7 +1370,7 @@ tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format) {
 		return c;
 	}
 
-	c.gl_id[0] = fbo;
+	c.gl_fbo = fbo;
 	c.allocated += 1;
 
 	return c;
@@ -1542,11 +1547,9 @@ tfx_texture tfx_get_texture(tfx_canvas *canvas, uint8_t index) {
 	memset(&tex, 0, sizeof(tfx_texture));
 
 	assert(index < canvas->allocated);
-
 	tex.format = canvas->format;
 	tex.gl_count = 1;
-	tex.gl_idx = 0;
-	tex.gl_ids[tex.gl_idx] = canvas->gl_id[index];
+	tex.gl_ids[0] = canvas->gl_ids[index];
 	tex.width = canvas->width;
 	tex.height = canvas->height;
 
@@ -1622,9 +1625,7 @@ static void push_uniforms(tfx_program program, tfx_draw *add_state) {
 
 		// only record the last update for a given uniform
 		if (!tfx_slookup(found, uniform.name)) {
-			tfx_uniform found_uniform;
-			memcpy(&found_uniform, &uniform, sizeof(tfx_uniform));
-
+			tfx_uniform found_uniform = uniform;
 			found_uniform.data = g_ub_cursor;
 			memcpy(found_uniform.data, uniform.data, uniform.size);
 			g_ub_cursor += uniform.size;
@@ -1859,7 +1860,7 @@ tfx_stats tfx_frame() {
 			pop_group();
 			continue;
 		}
-		CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, canvas->gl_id[0]));
+		CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, canvas->gl_fbo));
 		CHECK(tfx_glViewport(0, 0, canvas->width, canvas->height));
 
 		if (view->flags & TFX_VIEW_SCISSOR) {
@@ -1872,6 +1873,7 @@ tfx_stats tfx_frame() {
 		}
 
 		CHECK(tfx_glColorMask(true, true, true, true));
+		CHECK(tfx_glDepthMask(true));
 
 		GLuint mask = 0;
 		if (view->flags & TFX_VIEW_CLEAR_COLOR) {
