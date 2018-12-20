@@ -172,7 +172,7 @@ typedef struct tfx_draw {
 	bool use_scissor;
 
 	size_t offset;
-	uint16_t indices;
+	uint32_t indices;
 	uint32_t depth;
 
 	// for compute jobs
