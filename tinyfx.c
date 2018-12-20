@@ -227,6 +227,8 @@ static tfx_glext available_exts[] = {
 	{ "GL_ARB_debug_output", false },
 	{ "GL_KHR_debug", false },
 	{ "GL_NVX_gpu_memory_info", false },
+	// guaranteed by desktop GL 3.3+ or GLES 3.0+
+	{ "GL_ARB_instanced_arrays", false },
 	{ NULL, false }
 };
 
@@ -240,6 +242,7 @@ PFNGLGENBUFFERSPROC tfx_glGenBuffers;
 PFNGLBINDBUFFERPROC tfx_glBindBuffer;
 PFNGLBUFFERDATAPROC tfx_glBufferData;
 PFNGLDELETEBUFFERSPROC tfx_glDeleteBuffers;
+PFNGLDELETETEXTURESPROC tfx_glDeleteTextures;
 PFNGLCREATESHADERPROC tfx_glCreateShader;
 PFNGLSHADERSOURCEPROC tfx_glShaderSource;
 PFNGLCOMPILESHADERPROC tfx_glCompileShader;
@@ -323,6 +326,7 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glBindBuffer = get_proc_address("glBindBuffer");
 	tfx_glBufferData = get_proc_address("glBufferData");
 	tfx_glDeleteBuffers = get_proc_address("glDeleteBuffers");
+	tfx_glDeleteTextures= get_proc_address("glDeleteTextures");
 	tfx_glCreateShader = get_proc_address("glCreateShader");
 	tfx_glShaderSource = get_proc_address("glShaderSource");
 	tfx_glCompileShader = get_proc_address("glCompileShader");
@@ -471,12 +475,19 @@ tfx_caps tfx_get_caps() {
 		sb_free(supported);
 	}
 
-	caps.multisample = available_exts[0].supported;
-	caps.compute = available_exts[1].supported;
-	caps.float_canvas = available_exts[2].supported;
+	bool gl30 = g_platform_data.context_version >= 30 && !g_platform_data.use_gles;
+	bool gl33 = g_platform_data.context_version >= 33 && !g_platform_data.use_gles;
+	bool gl43 = g_platform_data.context_version >= 43 && !g_platform_data.use_gles;
+	bool gles30 = g_platform_data.context_version >= 30 && g_platform_data.use_gles;
+	bool gles31 = g_platform_data.context_version >= 31 && g_platform_data.use_gles;
+
+	caps.multisample = available_exts[0].supported || gl30;
+	caps.compute = available_exts[1].supported || gles31 || gl43;
+	caps.float_canvas = available_exts[2].supported || gles30 || gl30;
 	caps.debug_marker = available_exts[3].supported || available_exts[5].supported;
-	caps.debug_output = available_exts[4].supported;
+	caps.debug_output = available_exts[4].supported || gl43;
 	caps.memory_info = available_exts[6].supported;
+	caps.instancing = available_exts[7].supported || gl33 || gles30;
 
 	return caps;
 }
@@ -527,6 +538,7 @@ void tfx_dump_caps() {
 	#undef FUG
 	TFX_INFO("TinyFX renderer: %s", glver);
 
+	tfx_printb(TFX_SEVERITY_INFO, "instancing", caps.instancing);
 	tfx_printb(TFX_SEVERITY_INFO, "compute", caps.compute);
 	tfx_printb(TFX_SEVERITY_INFO, "fp canvas", caps.float_canvas);
 	tfx_printb(TFX_SEVERITY_INFO, "multisample", caps.multisample);
@@ -775,6 +787,9 @@ void tfx_reset(uint16_t width, uint16_t height) {
 	}
 
 	g_caps = tfx_get_caps();
+	// we require these, unless/until backporting for pre-compute HW.
+	assert(g_caps.instancing);
+	assert(g_caps.compute);
 
 	memset(&g_backbuffer, 0, sizeof(tfx_canvas));
 	g_backbuffer.allocated = 1;
@@ -813,6 +828,7 @@ void tfx_reset(uint16_t width, uint16_t height) {
 }
 
 static tfx_program *g_programs = NULL;
+static tfx_texture *g_textures = NULL;
 
 void tfx_shutdown() {
 	tfx_frame();
@@ -837,6 +853,11 @@ void tfx_shutdown() {
 	if (g_uniforms) {
 		sb_free(g_uniforms);
 		g_uniforms = NULL;
+	}
+
+	int nt = sb_count(g_textures);
+	while (nt-- > 0) {
+		tfx_texture_free(&g_textures[nt]);
 	}
 
 	tfx_glUseProgram(0);
@@ -1172,47 +1193,67 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, t
 	t.height = h;
 	t.format = format;
 
+	// TODO: buffered texture updates
+	t.gl_count = 1;
+	t.gl_idx = 0;
+
 	GLuint id = 0;
-	CHECK(tfx_glGenTextures(1, &id));
-	CHECK(tfx_glBindTexture(GL_TEXTURE_2D, id));
-	if ((flags & TFX_TEXTURE_FILTER_POINT) == TFX_TEXTURE_FILTER_POINT) {
-		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
-		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST));
-	}
-	else if ((flags & TFX_TEXTURE_FILTER_LINEAR) == TFX_TEXTURE_FILTER_LINEAR || !flags) {
-		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
-		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR));
-	}
-	CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
-	CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
+	CHECK(tfx_glGenTextures(t.gl_count, t.gl_ids));
+	for (unsigned i = 0; i < t.gl_count; i++) {
+		CHECK(tfx_glBindTexture(GL_TEXTURE_2D, t.gl_ids[i]));
+		if ((flags & TFX_TEXTURE_FILTER_POINT) == TFX_TEXTURE_FILTER_POINT) {
+			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
+			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST));
+		}
+		else if ((flags & TFX_TEXTURE_FILTER_LINEAR) == TFX_TEXTURE_FILTER_LINEAR || !flags) {
+			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR));
+		}
+		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
 
-	GLenum gl_fmt = 0;
-	GLenum gl_type = 0;
-	switch (format) {
-		case TFX_FORMAT_RGB565:
-			gl_fmt = GL_RGB;
-			gl_type = GL_UNSIGNED_SHORT_5_6_5;
-			break;
-		case TFX_FORMAT_RGBA8:
-			gl_fmt = GL_RGBA;
-			gl_type = GL_UNSIGNED_BYTE;
-			break;
-		default:
-			assert(false);
-			break;
-	}
+		GLenum gl_fmt = 0;
+		GLenum gl_type = 0;
+		switch (format) {
+			case TFX_FORMAT_RGB565:
+				gl_fmt = GL_RGB;
+				gl_type = GL_UNSIGNED_SHORT_5_6_5;
+				break;
+			case TFX_FORMAT_RGBA8:
+				gl_fmt = GL_RGBA;
+				gl_type = GL_UNSIGNED_BYTE;
+				break;
+			default:
+				assert(false);
+				break;
+		}
 
-	CHECK(tfx_glPixelStorei(GL_UNPACK_ALIGNMENT, 1));
-	CHECK(tfx_glTexImage2D(GL_TEXTURE_2D, 0, gl_fmt, w, h, 0, gl_fmt, gl_type, data));
-	if (gen_mips && data) {
-		CHECK(tfx_glGenerateMipmap(GL_TEXTURE_2D));
+		CHECK(tfx_glPixelStorei(GL_UNPACK_ALIGNMENT, 1));
+		CHECK(tfx_glTexImage2D(GL_TEXTURE_2D, 0, gl_fmt, w, h, 0, gl_fmt, gl_type, data));
+		if (gen_mips && data) {
+			CHECK(tfx_glGenerateMipmap(GL_TEXTURE_2D));
+		}
 	}
-
-	t.gl_id = id;
 
 	assert(id > 0);
 
+	sb_push(g_textures, t);
+
 	return t;
+}
+
+void tfx_texture_free(tfx_texture *tex) {
+	int nt = sb_count(g_textures);
+	for (int i = 0; i < nt; i++) {
+		tfx_texture *cached = &g_textures[i];
+		// we only need to check index 0, as these ids cannot overlap or be reused.
+		if (tex->gl_ids[0] == cached->gl_ids[0]) {
+			tfx_glDeleteTextures(cached->gl_count, cached->gl_ids);
+			g_textures[i] = g_textures[nt-1];
+			// this, uh, might not be right.
+			stb__sbraw(g_textures)[1] -= 1;
+		}
+	}
 }
 
 tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format) {
@@ -1460,7 +1501,7 @@ void tfx_set_texture(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot) {
 
 	sb_push(g_uniforms, *uniform);
 
-	assert(tex->gl_id > 0);
+	assert(tex->gl_ids[tex->gl_idx] > 0);
 	g_tmp_draw.textures[slot] = *tex;
 }
 
@@ -1471,7 +1512,9 @@ tfx_texture tfx_get_texture(tfx_canvas *canvas, uint8_t index) {
 	assert(index < canvas->allocated);
 
 	tex.format = canvas->format;
-	tex.gl_id = canvas->gl_id[index];
+	tex.gl_count = 1;
+	tex.gl_idx = 0;
+	tex.gl_ids[tex.gl_idx] = canvas->gl_id[index];
 	tex.width = canvas->width;
 	tex.height = canvas->height;
 
@@ -1728,7 +1771,7 @@ tfx_stats tfx_frame() {
 				}
 				// TODO: bind image textures
 				for (int i = 0; i < 8; i++) {
-					if (job.textures[i].gl_id != 0) {
+					if (job.textures[i].gl_ids[job.textures[i].gl_idx] != 0) {
 						tfx_buffer *ssbo = &job.ssbos[i];
 						if (ssbo->dirty) {
 							CHECK(tfx_glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT));
@@ -1982,9 +2025,9 @@ tfx_stats tfx_frame() {
 
 			for (int i = 0; i < 8; i++) {
 				tfx_texture *tex = &draw.textures[i];
-				if (tex->gl_id != 0) {
+				if (tex->gl_ids[tex->gl_idx] != 0) {
 					CHECK(tfx_glActiveTexture(GL_TEXTURE0 + i));
-					CHECK(tfx_glBindTexture(GL_TEXTURE_2D, tex->gl_id));
+					CHECK(tfx_glBindTexture(GL_TEXTURE_2D, tex->gl_ids[tex->gl_idx]));
 #ifdef TFX_DEBUG
 					assert(tex->gl_id > 0);
 #endif
@@ -1997,20 +2040,10 @@ tfx_stats tfx_frame() {
 					draw.ibo.dirty = false;
 				}
 				CHECK(tfx_glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, draw.ibo.gl_id));
-				if (tfx_glDrawElementsInstanced) {
-					CHECK(tfx_glDrawElementsInstanced(mode, draw.indices, GL_UNSIGNED_SHORT, (GLvoid*)draw.offset, 1));
-				}
-				else {
-					CHECK(tfx_glDrawElements(mode, draw.indices, GL_UNSIGNED_SHORT, (GLvoid*)draw.offset));
-				}
+				CHECK(tfx_glDrawElementsInstanced(mode, draw.indices, GL_UNSIGNED_SHORT, (GLvoid*)draw.offset, 1));
 			}
 			else {
-				if (tfx_glDrawArraysInstanced) {
-					CHECK(tfx_glDrawArraysInstanced(mode, 0, (GLsizei)draw.indices, 1));
-				}
-				else {
-					CHECK(tfx_glDrawArrays(mode, 0, (GLsizei)draw.indices));
-				}
+				CHECK(tfx_glDrawArraysInstanced(mode, 0, (GLsizei)draw.indices, 1));
 			}
 
 			sb_free(draw.uniforms);
