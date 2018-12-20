@@ -42,13 +42,13 @@ extern "C" {
 #endif
 
 #ifndef TFX_UNIFORM_BUFFER_SIZE
-// by default, allow up to 8MB of uniform updates per frame.
-#define TFX_UNIFORM_BUFFER_SIZE 1024*1024*8
+// by default, allow up to 4MB of uniform updates per frame.
+#define TFX_UNIFORM_BUFFER_SIZE 1024*1024*4
 #endif
 
 #ifndef TFX_TRANSIENT_BUFFER_SIZE
-// by default, allow up to 8MB of transient buffer data per frame.
-#define TFX_TRANSIENT_BUFFER_SIZE 1024*1024*8
+// by default, allow up to 4MB of transient buffer data per frame.
+#define TFX_TRANSIENT_BUFFER_SIZE 1024*1024*4
 #endif
 
 // The following code is public domain, from https://github.com/nothings/stb
@@ -261,6 +261,7 @@ PFNGLBINDTEXTUREPROC tfx_glBindTexture;
 PFNGLTEXPARAMETERIPROC tfx_glTexParameteri;
 PFNGLPIXELSTOREIPROC tfx_glPixelStorei;
 PFNGLTEXIMAGE2DPROC tfx_glTexImage2D;
+PFNGLTEXSUBIMAGE2DPROC tfx_glTexSubImage2D;
 PFNGLGENERATEMIPMAPPROC tfx_glGenerateMipmap;
 PFNGLGENFRAMEBUFFERSPROC tfx_glGenFramebuffers;
 PFNGLBINDFRAMEBUFFERPROC tfx_glBindFramebuffer;
@@ -345,6 +346,7 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glTexParameteri = get_proc_address("glTexParameteri");
 	tfx_glPixelStorei = get_proc_address("glPixelStorei");
 	tfx_glTexImage2D = get_proc_address("glTexImage2D");
+	tfx_glTexSubImage2D = get_proc_address("glTexSubImage2D");
 	tfx_glGenerateMipmap = get_proc_address("glGenerateMipmap");
 	tfx_glGenFramebuffers = get_proc_address("glGenFramebuffers");
 	tfx_glBindFramebuffer = get_proc_address("glBindFramebuffer");
@@ -1185,6 +1187,13 @@ tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tf
 	return buffer;
 }
 
+typedef struct tfx_texture_params {
+	GLenum format;
+	GLenum internal_format;
+	GLenum type;
+	void *update_data;
+} tfx_texture_params;
+
 tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, tfx_format format, uint16_t flags) {
 	tfx_texture t;
 	memset(&t, 0, sizeof(tfx_texture));
@@ -1192,14 +1201,36 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, t
 	t.width = w;
 	t.height = h;
 	t.format = format;
+	t.flags = flags;
 
-	// TODO: buffered texture updates
 	t.gl_count = 1;
 	t.gl_idx = 0;
 
-	GLuint id = 0;
+	tfx_texture_params *params = calloc(1, sizeof(tfx_texture_params));
+	params->update_data = NULL;
+
+	switch (format) {
+		case TFX_FORMAT_RGB565:
+			params->format = GL_RGB;
+			params->internal_format = GL_RGB;
+			params->type = GL_UNSIGNED_SHORT_5_6_5;
+			break;
+		case TFX_FORMAT_RGBA8:
+			params->format = GL_RGBA;
+			params->internal_format = GL_RGBA;
+			params->type = GL_UNSIGNED_BYTE;
+			break;
+		default:
+			assert(false);
+			break;
+	}
+
+	t.internal = params;
+
 	CHECK(tfx_glGenTextures(t.gl_count, t.gl_ids));
 	for (unsigned i = 0; i < t.gl_count; i++) {
+		assert(t.gl_ids[i] > 0);
+
 		CHECK(tfx_glBindTexture(GL_TEXTURE_2D, t.gl_ids[i]));
 		if ((flags & TFX_TEXTURE_FILTER_POINT) == TFX_TEXTURE_FILTER_POINT) {
 			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
@@ -1212,34 +1243,28 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, t
 		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
 		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
 
-		GLenum gl_fmt = 0;
-		GLenum gl_type = 0;
-		switch (format) {
-			case TFX_FORMAT_RGB565:
-				gl_fmt = GL_RGB;
-				gl_type = GL_UNSIGNED_SHORT_5_6_5;
-				break;
-			case TFX_FORMAT_RGBA8:
-				gl_fmt = GL_RGBA;
-				gl_type = GL_UNSIGNED_BYTE;
-				break;
-			default:
-				assert(false);
-				break;
-		}
+		//float aniso = 0.0f;
+		//glBindTexture(GL_TEXTURE_2D, texName);
+		//glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &aniso);
+		//glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, aniso);
 
 		CHECK(tfx_glPixelStorei(GL_UNPACK_ALIGNMENT, 1));
-		CHECK(tfx_glTexImage2D(GL_TEXTURE_2D, 0, gl_fmt, w, h, 0, gl_fmt, gl_type, data));
+		CHECK(tfx_glTexImage2D(GL_TEXTURE_2D, 0, params->internal_format, w, h, 0, params->format, params->type, data));
 		if (gen_mips && data) {
 			CHECK(tfx_glGenerateMipmap(GL_TEXTURE_2D));
 		}
 	}
 
-	assert(id > 0);
-
 	sb_push(g_textures, t);
 
 	return t;
+}
+
+void tfx_texture_update(tfx_texture *tex, void *data) {
+	assert((tex->flags & TFX_TEXTURE_CPU_WRITABLE) == TFX_TEXTURE_CPU_WRITABLE);
+	tfx_texture_params *internal = tex->internal;
+	internal->update_data = data;
+	tex->gl_idx = (tex->gl_idx + 1) % tex->gl_count;
 }
 
 void tfx_texture_free(tfx_texture *tex) {
@@ -1248,6 +1273,8 @@ void tfx_texture_free(tfx_texture *tex) {
 		tfx_texture *cached = &g_textures[i];
 		// we only need to check index 0, as these ids cannot overlap or be reused.
 		if (tex->gl_ids[0] == cached->gl_ids[0]) {
+			tfx_texture_params *internal = (tfx_texture_params*)cached->internal;
+			free(internal);
 			tfx_glDeleteTextures(cached->gl_count, cached->gl_ids);
 			g_textures[i] = g_textures[nt-1];
 			// this, uh, might not be right.
@@ -1719,7 +1746,7 @@ tfx_stats tfx_frame() {
 
 	unsigned debug_id = 0;
 
-	push_group(debug_id++, "Update Transient Buffers");
+	push_group(debug_id++, "Update Resources");
 
 	if (g_transient_buffer.offset > 0) {
 		CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, g_transient_buffer.buf.gl_id));
@@ -1732,6 +1759,17 @@ tfx_stats tfx_frame() {
 		}
 		else {
 			CHECK(tfx_glBufferSubData(GL_ARRAY_BUFFER, 0, g_transient_buffer.offset, g_transient_buffer.data));
+		}
+	}
+
+	int nt = sb_count(g_textures);
+	for (int i = 0; i < nt; i++) {
+		tfx_texture *tex = &g_textures[i];
+		tfx_texture_params *internal = tex->internal;
+		if (internal->update_data != NULL && (tex->flags & TFX_TEXTURE_CPU_WRITABLE) == TFX_TEXTURE_CPU_WRITABLE) {
+			tfx_glBindTexture(GL_TEXTURE_2D, tex->gl_ids[tex->gl_idx]);
+			tfx_glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, tex->width, tex->height, internal->format, internal->type, internal->update_data);
+			internal->update_data = NULL;
 		}
 	}
 
@@ -2029,7 +2067,7 @@ tfx_stats tfx_frame() {
 					CHECK(tfx_glActiveTexture(GL_TEXTURE0 + i));
 					CHECK(tfx_glBindTexture(GL_TEXTURE_2D, tex->gl_ids[tex->gl_idx]));
 #ifdef TFX_DEBUG
-					assert(tex->gl_id > 0);
+					assert(tex->gl_ids[tex->gl_idx] > 0);
 #endif
 				}
 			}

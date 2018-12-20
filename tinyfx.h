@@ -61,8 +61,10 @@ enum {
 };
 
 enum {
-	TFX_TEXTURE_FILTER_LINEAR  = 1 << 0,
-	TFX_TEXTURE_FILTER_POINT = 1 << 1
+	TFX_TEXTURE_FILTER_POINT = 1 << 0,
+	TFX_TEXTURE_FILTER_LINEAR  = 1 << 1,
+	//TFX_TEXTURE_FILTER_ANISOTROPIC = 1 << 2,
+	TFX_TEXTURE_CPU_WRITABLE = 1 << 3
 };
 
 typedef enum tfx_format {
@@ -132,6 +134,8 @@ typedef struct tfx_texture {
 	uint16_t width;
 	uint16_t height;
 	tfx_format format;
+	uint16_t flags, _pad0;
+	void *internal;
 } tfx_texture;
 
 typedef struct tfx_canvas {
@@ -231,6 +235,7 @@ TFX_API tfx_transient_buffer tfx_transient_buffer_new(tfx_vertex_format *fmt, ui
 TFX_API tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tfx_buffer_usage usage);
 
 TFX_API tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, tfx_format format, uint16_t flags);
+TFX_API void tfx_texture_update(tfx_texture *tex, void *data);
 TFX_API void tfx_texture_free(tfx_texture *tex);
 TFX_API tfx_texture tfx_get_texture(tfx_canvas *canvas, uint8_t index);
 
