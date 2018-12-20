@@ -1204,6 +1204,12 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, t
 	t.flags = flags;
 
 	t.gl_count = 1;
+
+	// double buffer the texture updates, to reduce stalling.
+	if ((flags & TFX_TEXTURE_CPU_WRITABLE) == TFX_TEXTURE_CPU_WRITABLE) {
+		t.gl_count = 2;
+	}
+
 	t.gl_idx = 0;
 
 	tfx_texture_params *params = calloc(1, sizeof(tfx_texture_params));
@@ -1264,7 +1270,6 @@ void tfx_texture_update(tfx_texture *tex, void *data) {
 	assert((tex->flags & TFX_TEXTURE_CPU_WRITABLE) == TFX_TEXTURE_CPU_WRITABLE);
 	tfx_texture_params *internal = tex->internal;
 	internal->update_data = data;
-	tex->gl_idx = (tex->gl_idx + 1) % tex->gl_count;
 }
 
 void tfx_texture_free(tfx_texture *tex) {
@@ -1767,6 +1772,8 @@ tfx_stats tfx_frame() {
 		tfx_texture *tex = &g_textures[i];
 		tfx_texture_params *internal = tex->internal;
 		if (internal->update_data != NULL && (tex->flags & TFX_TEXTURE_CPU_WRITABLE) == TFX_TEXTURE_CPU_WRITABLE) {
+			// spin the buffer id before updating
+			tex->gl_idx = (tex->gl_idx + 1) % tex->gl_count;
 			tfx_glBindTexture(GL_TEXTURE_2D, tex->gl_ids[tex->gl_idx]);
 			tfx_glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, tex->width, tex->height, internal->format, internal->type, internal->update_data);
 			internal->update_data = NULL;
