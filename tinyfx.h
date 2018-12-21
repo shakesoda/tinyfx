@@ -20,7 +20,8 @@ typedef enum tfx_buffer_usage {
 typedef enum tfx_depth_test {
 	TFX_DEPTH_TEST_NONE = 0,
 	TFX_DEPTH_TEST_LT,
-	TFX_DEPTH_TEST_GT
+	TFX_DEPTH_TEST_GT,
+	TFX_DEPTH_TEST_EQ
 } tfx_depth_test;
 
 #define TFX_INVALID_BUFFER tfx_buffer { 0 }
@@ -64,7 +65,9 @@ enum {
 	TFX_TEXTURE_FILTER_POINT = 1 << 0,
 	TFX_TEXTURE_FILTER_LINEAR  = 1 << 1,
 	//TFX_TEXTURE_FILTER_ANISOTROPIC = 1 << 2,
-	TFX_TEXTURE_CPU_WRITABLE = 1 << 3
+	TFX_TEXTURE_CPU_WRITABLE = 1 << 3,
+	// TFX_TEXTURE_GPU_WRITABLE = 1 << 4,
+	TFX_TEXTURE_GEN_MIPS = 1 << 5
 };
 
 typedef enum tfx_format {
@@ -79,6 +82,7 @@ typedef enum tfx_format {
 	// color + depth
 	TFX_FORMAT_RGB565_D16,
 	TFX_FORMAT_RGBA8_D16,
+	TFX_FORMAT_RGBA8_D24,
 
 	// TFX_FORMAT_RGB10A2_D16,
 	// TFX_FORMAT_RG11B10F_D16,
@@ -145,6 +149,7 @@ typedef struct tfx_canvas {
 	uint16_t width;
 	uint16_t height;
 	tfx_format format;
+	bool mipmaps;
 } tfx_canvas;
 
 typedef enum tfx_component_type {
@@ -235,12 +240,12 @@ TFX_API tfx_transient_buffer tfx_transient_buffer_new(tfx_vertex_format *fmt, ui
 
 TFX_API tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tfx_buffer_usage usage);
 
-TFX_API tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, tfx_format format, uint16_t flags);
+TFX_API tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, tfx_format format, uint16_t flags);
 TFX_API void tfx_texture_update(tfx_texture *tex, void *data);
 TFX_API void tfx_texture_free(tfx_texture *tex);
 TFX_API tfx_texture tfx_get_texture(tfx_canvas *canvas, uint8_t index);
 
-TFX_API tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format);
+TFX_API tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format, uint16_t flags);
 
 TFX_API void tfx_view_set_name(uint8_t id, const char *name);
 TFX_API void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas);

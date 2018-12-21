@@ -144,9 +144,10 @@ enum {
 	// depth modes
 	TFX_VIEW_DEPTH_TEST_LT = 1 << 2,
 	TFX_VIEW_DEPTH_TEST_GT = 1 << 3,
+	TFX_VIEW_DEPTH_TEST_EQ = 1 << 4,
 
 	// scissor test
-	TFX_VIEW_SCISSOR       = 1 << 4
+	TFX_VIEW_SCISSOR       = 1 << 5
 };
 
 typedef struct tfx_draw {
@@ -203,7 +204,7 @@ typedef struct tfx_view {
 } tfx_view;
 
 #define TFX_VIEW_CLEAR_MASK      (TFX_VIEW_CLEAR_COLOR | TFX_VIEW_CLEAR_DEPTH)
-#define TFX_VIEW_DEPTH_TEST_MASK (TFX_VIEW_DEPTH_TEST_LT | TFX_VIEW_DEPTH_TEST_GT)
+#define TFX_VIEW_DEPTH_TEST_MASK (TFX_VIEW_DEPTH_TEST_LT | TFX_VIEW_DEPTH_TEST_GT | TFX_VIEW_DEPTH_TEST_EQ)
 
 #define TFX_STATE_CULL_MASK      (TFX_STATE_CULL_CW | TFX_STATE_CULL_CCW)
 #define TFX_STATE_BLEND_MASK     (TFX_STATE_BLEND_ALPHA)
@@ -937,6 +938,7 @@ const char *legacy_vs_prepend = ""
 	"#pragma optionNV(strict on)\n"
 	"#define main _pain\n"
 	"#define tfx_viewport_count 1\n"
+	"#define VERTEX 1\n"
 	"#line 1\n"
 ;
 const char *legacy_fs_prepend = ""
@@ -949,6 +951,7 @@ const char *legacy_fs_prepend = ""
 	"#define in varying\n"
 	"#endif\n"
 	"#pragma optionNV(strict on)\n"
+	"#define PIXEL 1\n"
 	"#line 1\n"
 ;
 const char *vs_prepend = ""
@@ -957,12 +960,14 @@ const char *vs_prepend = ""
 	"#endif\n"
 	"#define main _pain\n"
 	"#define tfx_viewport_count 1\n"
+	"#define VERTEX 1\n"
 	"#line 1\n"
 ;
 const char *fs_prepend = ""
 	"#ifdef GL_ES\n"
 	"precision mediump float;\n"
 	"#endif\n"
+	"#define PIXEL 1\n"
 	"#line 1\n"
 ;
 
@@ -1196,7 +1201,7 @@ typedef struct tfx_texture_params {
 	void *update_data;
 } tfx_texture_params;
 
-tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, tfx_format format, uint16_t flags) {
+tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, tfx_format format, uint16_t flags) {
 	tfx_texture t;
 	memset(&t, 0, sizeof(tfx_texture));
 
@@ -1238,6 +1243,8 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, bool gen_mips, t
 	CHECK(tfx_glGenTextures(t.gl_count, t.gl_ids));
 	for (unsigned i = 0; i < t.gl_count; i++) {
 		assert(t.gl_ids[i] > 0);
+
+		bool gen_mips = (flags & TFX_TEXTURE_GEN_MIPS) == TFX_TEXTURE_GEN_MIPS;
 
 		CHECK(tfx_glBindTexture(GL_TEXTURE_2D, t.gl_ids[i]));
 		if ((flags & TFX_TEXTURE_FILTER_POINT) == TFX_TEXTURE_FILTER_POINT) {
@@ -1290,7 +1297,7 @@ void tfx_texture_free(tfx_texture *tex) {
 	}
 }
 
-tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format) {
+tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format, uint16_t flags) {
 	tfx_canvas c;
 	memset(&c, 0, sizeof(tfx_canvas));
 
@@ -1321,7 +1328,13 @@ tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format) {
 		case TFX_FORMAT_RGBA8_D16: {
 			color_format = GL_UNSIGNED_BYTE;
 			depth_format = GL_DEPTH_COMPONENT16;
-			internal = GL_RGB;
+			internal = GL_RGBA;
+			break;
+		}
+		case TFX_FORMAT_RGBA8_D24: {
+			color_format = GL_UNSIGNED_BYTE;
+			depth_format = GL_DEPTH_COMPONENT24;
+			internal = GL_RGBA;
 			break;
 		}
 		case TFX_FORMAT_RGB565_D16: {
@@ -1349,8 +1362,17 @@ tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format) {
 		c.gl_ids[idx++] = color;
 		CHECK(tfx_glBindTexture(GL_TEXTURE_2D, color));
 		CHECK(tfx_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, internal, color_format, NULL));
-		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST));
-		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
+
+		bool gen_mips = (flags & TFX_TEXTURE_GEN_MIPS) == TFX_TEXTURE_GEN_MIPS;
+		if ((flags & TFX_TEXTURE_FILTER_POINT) == TFX_TEXTURE_FILTER_POINT) {
+			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
+			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST));
+		}
+		else if ((flags & TFX_TEXTURE_FILTER_LINEAR) == TFX_TEXTURE_FILTER_LINEAR || !flags) {
+			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR));
+		}
+
 		CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color, 0));
 	}
 
@@ -1459,6 +1481,10 @@ void tfx_view_set_depth_test(uint8_t id, tfx_depth_test mode) {
 		}
 		case TFX_DEPTH_TEST_GT: {
 			view->flags |= TFX_VIEW_DEPTH_TEST_GT;
+			break;
+		}
+		case TFX_DEPTH_TEST_EQ: {
+			view->flags |= TFX_VIEW_DEPTH_TEST_EQ;
 			break;
 		}
 		default: assert(false); break;
@@ -1785,6 +1811,8 @@ tfx_stats tfx_frame() {
 
 	char debug_label[256];
 
+	tfx_canvas *last_canvas = NULL;
+
 	for (int id = 0; id < VIEW_MAX; id++) {
 		tfx_view *view = &g_views[id];
 
@@ -1863,6 +1891,12 @@ tfx_stats tfx_frame() {
 		CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, canvas->gl_fbo));
 		CHECK(tfx_glViewport(0, 0, canvas->width, canvas->height));
 
+		if (last_canvas && canvas != last_canvas && last_canvas->mipmaps) {
+			tfx_glBindTexture(GL_TEXTURE_2D, last_canvas->gl_ids[0]);
+			tfx_glGenerateMipmap(GL_TEXTURE_2D);
+		}
+		last_canvas = canvas;
+
 		if (view->flags & TFX_VIEW_SCISSOR) {
 			tfx_rect rect = view->scissor_rect;
 			CHECK(tfx_glEnable(GL_SCISSOR_TEST));
@@ -1912,20 +1946,39 @@ tfx_stats tfx_frame() {
 			else if (view->flags & TFX_VIEW_DEPTH_TEST_GT) {
 				CHECK(tfx_glDepthFunc(GL_GEQUAL));
 			}
+			else if (view->flags & TFX_VIEW_DEPTH_TEST_EQ) {
+				CHECK(tfx_glDepthFunc(GL_EQUAL));
+			}
 		}
 		else {
 			CHECK(tfx_glDisable(GL_DEPTH_TEST));
 		}
 
-		// TODO: reduce redundant state setting
+
+#define CHANGED(diff, mask) ((diff & mask) != 0)
+
+		uint64_t last_flags = 0;
 		for (int i = 0; i < nd; i++) {
 			tfx_draw draw = view->draws[i];
 			if (draw.program != program) {
 				CHECK(tfx_glUseProgram(draw.program));
 				program = draw.program;
 			}
-			CHECK(tfx_glDepthMask((draw.flags & TFX_STATE_DEPTH_WRITE) > 0));
-			if (g_caps.multisample) {
+
+			// on first iteration of a pass, make sure to set everything.
+			if (i == 0) {
+				last_flags = ~draw.flags;
+			}
+
+			// simple flag diff cuts total GL calls by approx 20% in testing
+			uint64_t flags_diff = draw.flags ^ last_flags;
+			last_flags = draw.flags;
+
+			if (CHANGED(flags_diff, TFX_STATE_DEPTH_WRITE)) {
+				CHECK(tfx_glDepthMask((draw.flags & TFX_STATE_DEPTH_WRITE) > 0));
+			}
+
+			if (CHANGED(flags_diff, TFX_STATE_MSAA) && g_caps.multisample) {
 				if (draw.flags & TFX_STATE_MSAA) {
 					CHECK(tfx_glEnable(GL_MULTISAMPLE));
 				}
@@ -1933,31 +1986,38 @@ tfx_stats tfx_frame() {
 					CHECK(tfx_glDisable(GL_MULTISAMPLE));
 				}
 			}
-			if (draw.flags & TFX_STATE_CULL_CW) {
-				CHECK(tfx_glEnable(GL_CULL_FACE));
-				CHECK(tfx_glFrontFace(GL_CW));
-			}
-			else if (draw.flags & TFX_STATE_CULL_CCW) {
-				CHECK(tfx_glEnable(GL_CULL_FACE));
-				CHECK(tfx_glFrontFace(GL_CCW));
-			}
-			else {
-				CHECK(tfx_glDisable(GL_CULL_FACE));
-			}
 
-			if (draw.flags & TFX_STATE_BLEND_MASK) {
-				CHECK(tfx_glEnable(GL_BLEND));
-				if (draw.flags & TFX_STATE_BLEND_ALPHA) {
-					CHECK(tfx_glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA));
+			if (CHANGED(flags_diff, TFX_STATE_CULL_MASK)) {
+				if (draw.flags & TFX_STATE_CULL_CW) {
+					CHECK(tfx_glEnable(GL_CULL_FACE));
+					CHECK(tfx_glFrontFace(GL_CW));
+				}
+				else if (draw.flags & TFX_STATE_CULL_CCW) {
+					CHECK(tfx_glEnable(GL_CULL_FACE));
+					CHECK(tfx_glFrontFace(GL_CCW));
+				}
+				else {
+					CHECK(tfx_glDisable(GL_CULL_FACE));
 				}
 			}
-			else {
-				CHECK(tfx_glDisable(GL_BLEND));
+
+			if (CHANGED(flags_diff, TFX_STATE_BLEND_MASK)) {
+				if (draw.flags & TFX_STATE_BLEND_MASK) {
+					CHECK(tfx_glEnable(GL_BLEND));
+					if (draw.flags & TFX_STATE_BLEND_ALPHA) {
+						CHECK(tfx_glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA));
+					}
+				}
+				else {
+					CHECK(tfx_glDisable(GL_BLEND));
+				}
 			}
 
-			bool write_rgb = draw.flags & TFX_STATE_RGB_WRITE;
-			bool write_alpha = draw.flags & TFX_STATE_ALPHA_WRITE;
-			CHECK(tfx_glColorMask(write_rgb, write_rgb, write_rgb, write_alpha));
+			if (CHANGED(flags_diff, TFX_STATE_RGB_WRITE) || CHANGED(flags_diff, TFX_STATE_ALPHA_WRITE)) {
+				bool write_rgb = draw.flags & TFX_STATE_RGB_WRITE;
+				bool write_alpha = draw.flags & TFX_STATE_ALPHA_WRITE;
+				CHECK(tfx_glColorMask(write_rgb, write_rgb, write_rgb, write_alpha));
+			}
 
 			if ((view->flags & TFX_VIEW_SCISSOR) || draw.use_scissor) {
 				CHECK(tfx_glEnable(GL_SCISSOR_TEST));
@@ -2095,6 +2155,8 @@ tfx_stats tfx_frame() {
 
 			sb_free(draw.uniforms);
 		}
+
+#undef CHANGED
 
 		sb_free(view->jobs);
 		view->jobs = NULL;

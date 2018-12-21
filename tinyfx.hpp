@@ -47,8 +47,8 @@ namespace tfx {
 
 	struct Canvas {
 		tfx_canvas canvas;
-		Canvas(uint16_t w, uint16_t h, tfx_format format = TFX_FORMAT_RGBA8_D16) {
-			this->canvas = tfx_canvas_new(w, h, format);
+		Canvas(uint16_t w, uint16_t h, tfx_format format = TFX_FORMAT_RGBA8_D16, uint16_t flags = TFX_TEXTURE_FILTER_POINT) {
+			this->canvas = tfx_canvas_new(w, h, format, flags);
 		}
 	};
 
@@ -91,8 +91,8 @@ namespace tfx {
 
 	struct Texture {
 		tfx_texture texture;
-		Texture(uint16_t w, uint16_t h, void *data = NULL, bool gen_mips = true, tfx_format format = TFX_FORMAT_RGBA8, uint16_t flags = TFX_TEXTURE_FILTER_LINEAR) {
-			this->texture = tfx_texture_new(w, h, data, gen_mips, format, flags);
+		Texture(uint16_t w, uint16_t h, void *data = NULL, tfx_format format = TFX_FORMAT_RGBA8, uint16_t flags = TFX_TEXTURE_FILTER_LINEAR) {
+			this->texture = tfx_texture_new(w, h, data, format, flags);
 		}
 	};
 
