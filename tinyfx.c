@@ -293,8 +293,8 @@ PFNGLDEPTHFUNCPROC tfx_glDepthFunc;
 PFNGLDISABLEPROC tfx_glDisable;
 PFNGLDEPTHMASKPROC tfx_glDepthMask;
 PFNGLFRONTFACEPROC tfx_glFrontFace;
-PFNGLUNIFORM1IPROC tfx_glUniform1i;
-PFNGLUNIFORM1FPROC tfx_glUniform1f;
+PFNGLUNIFORM1IPROC tfx_glUniform1iv;
+PFNGLUNIFORM1FPROC tfx_glUniform1fv;
 PFNGLUNIFORM2FVPROC tfx_glUniform2fv;
 PFNGLUNIFORM3FVPROC tfx_glUniform3fv;
 PFNGLUNIFORM4FVPROC tfx_glUniform4fv;
@@ -378,8 +378,8 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glDisable = get_proc_address("glDisable");
 	tfx_glDepthMask = get_proc_address("glDepthMask");
 	tfx_glFrontFace = get_proc_address("glFrontFace");
-	tfx_glUniform1i = get_proc_address("glUniform1i");
-	tfx_glUniform1f = get_proc_address("glUniform1f");
+	tfx_glUniform1iv = get_proc_address("glUniform1iv");
+	tfx_glUniform1fv = get_proc_address("glUniform1fv");
 	tfx_glUniform2fv = get_proc_address("glUniform2fv");
 	tfx_glUniform3fv = get_proc_address("glUniform3fv");
 	tfx_glUniform4fv = get_proc_address("glUniform4fv");
@@ -1433,6 +1433,14 @@ void tfx_set_uniform(tfx_uniform *uniform, const float *data) {
 	sb_push(g_uniforms, *uniform);
 }
 
+void tfx_set_uniform_int(tfx_uniform *uniform, const int *data) {
+	uniform->data = g_ub_cursor;
+	memcpy(uniform->idata, data, uniform->size);
+	g_ub_cursor += uniform->size;
+
+	sb_push(g_uniforms, *uniform);
+}
+
 void tfx_view_set_transform(uint8_t id, float *_view, float *proj_l, float *proj_r) {
 	// TODO: reserve tfx_world_to_view, tfx_view_to_screen uniforms
 	tfx_view *view = &g_views[id];
@@ -2047,8 +2055,8 @@ tfx_stats tfx_frame() {
 					continue;
 				}
 				switch (uniform.type) {
-					case TFX_UNIFORM_INT:   CHECK(tfx_glUniform1i(loc, *uniform.idata)); break;
-					case TFX_UNIFORM_FLOAT: CHECK(tfx_glUniform1f(loc, *uniform.fdata)); break;
+					case TFX_UNIFORM_INT:   CHECK(tfx_glUniform1iv(loc, uniform.count, uniform.idata)); break;
+					case TFX_UNIFORM_FLOAT: CHECK(tfx_glUniform1fv(loc, uniform.count, uniform.fdata)); break;
 					case TFX_UNIFORM_VEC2:  CHECK(tfx_glUniform2fv(loc, uniform.count, uniform.fdata)); break;
 					case TFX_UNIFORM_VEC3:  CHECK(tfx_glUniform3fv(loc, uniform.count, uniform.fdata)); break;
 					case TFX_UNIFORM_VEC4:  CHECK(tfx_glUniform4fv(loc, uniform.count, uniform.fdata)); break;
