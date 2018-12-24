@@ -126,10 +126,10 @@ namespace tfx {
 	}
 	inline void set_uniform(Uniform &uniform, float data) {
 		float tmp = data;
-		tfx_set_uniform(&uniform.uniform, &tmp);
+		tfx_set_uniform(&uniform.uniform, &tmp, -1);
 	}
 	inline void set_uniform(Uniform &uniform, float *data) {
-		tfx_set_uniform(&uniform.uniform, data);
+		tfx_set_uniform(&uniform.uniform, data, -1);
 	}
 	inline void set_texture(Uniform &uniform, Texture &texture, uint8_t slot) {
 		tfx_set_texture(&uniform.uniform, &texture.texture, slot);

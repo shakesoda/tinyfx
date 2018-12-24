@@ -293,8 +293,8 @@ PFNGLDEPTHFUNCPROC tfx_glDepthFunc;
 PFNGLDISABLEPROC tfx_glDisable;
 PFNGLDEPTHMASKPROC tfx_glDepthMask;
 PFNGLFRONTFACEPROC tfx_glFrontFace;
-PFNGLUNIFORM1IPROC tfx_glUniform1iv;
-PFNGLUNIFORM1FPROC tfx_glUniform1fv;
+PFNGLUNIFORM1IVPROC tfx_glUniform1iv;
+PFNGLUNIFORM1FVPROC tfx_glUniform1fv;
 PFNGLUNIFORM2FVPROC tfx_glUniform2fv;
 PFNGLUNIFORM3FVPROC tfx_glUniform3fv;
 PFNGLUNIFORM4FVPROC tfx_glUniform4fv;
@@ -1420,23 +1420,38 @@ tfx_uniform tfx_uniform_new(const char *name, tfx_uniform_type type, int count) 
 	u.name  = name;
 	u.type  = type;
 	u.count = count;
+	u.last_count = count;
 	u.size  = count * uniform_size_for(type);
 
 	return u;
 }
 
-void tfx_set_uniform(tfx_uniform *uniform, const float *data) {
+void tfx_set_uniform(tfx_uniform *uniform, const float *data, const int count) {
+	size_t size = uniform->size;
+	uniform->last_count = uniform->count;
+	if (count >= 0) {
+		size = count * uniform_size_for(uniform->type);
+		uniform->last_count = count;
+	}
+
 	uniform->data = g_ub_cursor;
-	memcpy(uniform->fdata, data, uniform->size);
-	g_ub_cursor += uniform->size;
+	memcpy(uniform->fdata, data, size);
+	g_ub_cursor += size;
 
 	sb_push(g_uniforms, *uniform);
 }
 
-void tfx_set_uniform_int(tfx_uniform *uniform, const int *data) {
+void tfx_set_uniform_int(tfx_uniform *uniform, const int *data, const int count) {
+	size_t size = uniform->size;
+	uniform->last_count = uniform->count;
+	if (count >= 0) {
+		size = count * uniform_size_for(uniform->type);
+		uniform->last_count = count;
+	}
+
 	uniform->data = g_ub_cursor;
-	memcpy(uniform->idata, data, uniform->size);
-	g_ub_cursor += uniform->size;
+	memcpy(uniform->idata, data, size);
+	g_ub_cursor += size;
 
 	sb_push(g_uniforms, *uniform);
 }
@@ -2055,14 +2070,14 @@ tfx_stats tfx_frame() {
 					continue;
 				}
 				switch (uniform.type) {
-					case TFX_UNIFORM_INT:   CHECK(tfx_glUniform1iv(loc, uniform.count, uniform.idata)); break;
-					case TFX_UNIFORM_FLOAT: CHECK(tfx_glUniform1fv(loc, uniform.count, uniform.fdata)); break;
-					case TFX_UNIFORM_VEC2:  CHECK(tfx_glUniform2fv(loc, uniform.count, uniform.fdata)); break;
-					case TFX_UNIFORM_VEC3:  CHECK(tfx_glUniform3fv(loc, uniform.count, uniform.fdata)); break;
-					case TFX_UNIFORM_VEC4:  CHECK(tfx_glUniform4fv(loc, uniform.count, uniform.fdata)); break;
-					case TFX_UNIFORM_MAT2:  CHECK(tfx_glUniformMatrix2fv(loc, uniform.count, 0, uniform.fdata)); break;
-					case TFX_UNIFORM_MAT3:  CHECK(tfx_glUniformMatrix3fv(loc, uniform.count, 0, uniform.fdata)); break;
-					case TFX_UNIFORM_MAT4:  CHECK(tfx_glUniformMatrix4fv(loc, uniform.count, 0, uniform.fdata)); break;
+					case TFX_UNIFORM_INT:   CHECK(tfx_glUniform1iv(loc, uniform.last_count, uniform.idata)); break;
+					case TFX_UNIFORM_FLOAT: CHECK(tfx_glUniform1fv(loc, uniform.last_count, uniform.fdata)); break;
+					case TFX_UNIFORM_VEC2:  CHECK(tfx_glUniform2fv(loc, uniform.last_count, uniform.fdata)); break;
+					case TFX_UNIFORM_VEC3:  CHECK(tfx_glUniform3fv(loc, uniform.last_count, uniform.fdata)); break;
+					case TFX_UNIFORM_VEC4:  CHECK(tfx_glUniform4fv(loc, uniform.last_count, uniform.fdata)); break;
+					case TFX_UNIFORM_MAT2:  CHECK(tfx_glUniformMatrix2fv(loc, uniform.last_count, 0, uniform.fdata)); break;
+					case TFX_UNIFORM_MAT3:  CHECK(tfx_glUniformMatrix3fv(loc, uniform.last_count, 0, uniform.fdata)); break;
+					case TFX_UNIFORM_MAT4:  CHECK(tfx_glUniformMatrix4fv(loc, uniform.last_count, 0, uniform.fdata)); break;
 					default: assert(false); break;
 				}
 			}
