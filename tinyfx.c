@@ -1370,6 +1370,7 @@ tfx_canvas mk_cube_canvas(tfx_canvas canvas, uint16_t flags) {
 	canvas.gl_fbo = fb;
 	canvas.allocated += 1;
 	canvas.mipmaps = gen_mips;
+	canvas.cube = true;
 
 	return canvas;
 }
@@ -2014,7 +2015,7 @@ tfx_stats tfx_frame() {
 			CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,  GL_TEXTURE_CUBE_MAP_POSITIVE_X + view->canvas_layer, canvas->gl_ids[1], 0));
 		}
 
-		if (last_canvas && canvas != last_canvas && last_canvas->mipmaps) {
+		if (last_canvas && canvas != last_canvas && last_canvas->mipmaps && last_canvas->gl_fbo != canvas->gl_fbo) {
 			GLenum fmt = last_canvas->cube ? GL_TEXTURE_CUBE_MAP : GL_TEXTURE_2D;
 			tfx_glBindTexture(fmt, last_canvas->gl_ids[0]);
 			tfx_glGenerateMipmap(fmt);
