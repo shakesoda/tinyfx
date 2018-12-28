@@ -230,6 +230,7 @@ typedef struct tfx_caps {
 	bool memory_info;
 	bool instancing;
 	bool seamless_cubemap;
+	bool anisotropic_filtering;
 } tfx_caps;
 
 // TODO

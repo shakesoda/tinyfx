@@ -233,6 +233,7 @@ static tfx_glext available_exts[] = {
 	// guaranteed by desktop GL 3.3+ or GLES 3.0+
 	{ "GL_ARB_instanced_arrays", false },
 	{ "GL_ARB_seamless_cube_map", false },
+	{ "GL_EXT_texture_filter_anisotropic", false },
 	{ NULL, false }
 };
 
@@ -242,6 +243,7 @@ PFNGLGETERRORPROC tfx_glGetError;
 PFNGLBLENDFUNCPROC tfx_glBlendFunc;
 PFNGLCOLORMASKPROC tfx_glColorMask;
 PFNGLGETINTEGERVPROC tfx_glGetIntegerv;
+PFNGLGETFLOATVPROC tfx_glGetFloatv;
 PFNGLGENBUFFERSPROC tfx_glGenBuffers;
 PFNGLBINDBUFFERPROC tfx_glBindBuffer;
 PFNGLBUFFERDATAPROC tfx_glBufferData;
@@ -263,6 +265,7 @@ PFNGLDELETEPROGRAMPROC tfx_glDeleteProgram;
 PFNGLGENTEXTURESPROC tfx_glGenTextures;
 PFNGLBINDTEXTUREPROC tfx_glBindTexture;
 PFNGLTEXPARAMETERIPROC tfx_glTexParameteri;
+PFNGLTEXPARAMETERFPROC tfx_glTexParameterf;
 PFNGLPIXELSTOREIPROC tfx_glPixelStorei;
 PFNGLTEXIMAGE2DPROC tfx_glTexImage2D;
 PFNGLTEXSUBIMAGE2DPROC tfx_glTexSubImage2D;
@@ -330,6 +333,7 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glBlendFunc = get_proc_address("glBlendFunc");
 	tfx_glColorMask = get_proc_address("glColorMask");
 	tfx_glGetIntegerv = get_proc_address("glGetIntegerv");
+	tfx_glGetFloatv = get_proc_address("glGetFloatv");
 	tfx_glGenBuffers = get_proc_address("glGenBuffers");
 	tfx_glBindBuffer = get_proc_address("glBindBuffer");
 	tfx_glBufferData = get_proc_address("glBufferData");
@@ -351,6 +355,7 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glGenTextures = get_proc_address("glGenTextures");
 	tfx_glBindTexture = get_proc_address("glBindTexture");
 	tfx_glTexParameteri = get_proc_address("glTexParameteri");
+	tfx_glTexParameterf = get_proc_address("glTexParameterf");
 	tfx_glPixelStorei = get_proc_address("glPixelStorei");
 	tfx_glTexImage2D = get_proc_address("glTexImage2D");
 	tfx_glTexSubImage2D = get_proc_address("glTexSubImage2D");
@@ -493,6 +498,7 @@ tfx_caps tfx_get_caps() {
 	bool gl32 = g_platform_data.context_version >= 32 && !g_platform_data.use_gles;
 	bool gl33 = g_platform_data.context_version >= 33 && !g_platform_data.use_gles;
 	bool gl43 = g_platform_data.context_version >= 43 && !g_platform_data.use_gles;
+	bool gl46 = g_platform_data.context_version >= 46 && !g_platform_data.use_gles;
 	bool gles30 = g_platform_data.context_version >= 30 && g_platform_data.use_gles;
 	bool gles31 = g_platform_data.context_version >= 31 && g_platform_data.use_gles;
 
@@ -504,6 +510,7 @@ tfx_caps tfx_get_caps() {
 	caps.memory_info = available_exts[6].supported;
 	caps.instancing = available_exts[7].supported || gl33 || gles30;
 	caps.seamless_cubemap = available_exts[8].supported || gl32;
+	caps.anisotropic_filtering = available_exts[9].supported || gl46;
 
 	return caps;
 }
@@ -1319,6 +1326,16 @@ tfx_canvas mk_cube_canvas(tfx_canvas canvas, uint16_t flags) {
 	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
 	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR));
 	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+
+	/*
+	if (g_caps.anisotropic_filtering) {
+		float aniso = 0.0f;
+		GLenum GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FF;
+		GLenum GL_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FE;
+		CHECK(tfx_glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &aniso));
+		CHECK(tfx_glTexParameterf(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAX_ANISOTROPY_EXT, aniso));
+	}
+	*/
 
 	bool hdr = (canvas.format & TFX_FORMAT_RG11B10F) == TFX_FORMAT_RG11B10F;
 	GLenum fmt = GL_RGBA8;
