@@ -189,6 +189,8 @@ typedef struct tfx_view {
 
 	bool has_canvas;
 	tfx_canvas  canvas;
+	int canvas_layer;
+
 	tfx_draw    *draws;
 	tfx_draw    *jobs;
 	tfx_blit_op *blits;
@@ -230,6 +232,7 @@ static tfx_glext available_exts[] = {
 	{ "GL_NVX_gpu_memory_info", false },
 	// guaranteed by desktop GL 3.3+ or GLES 3.0+
 	{ "GL_ARB_instanced_arrays", false },
+	{ "GL_ARB_seamless_cube_map", false },
 	{ NULL, false }
 };
 
@@ -271,6 +274,9 @@ PFNGLGENRENDERBUFFERSPROC tfx_glGenRenderbuffers;
 PFNGLBINDRENDERBUFFERPROC tfx_glBindRenderbuffer;
 PFNGLRENDERBUFFERSTORAGEPROC tfx_glRenderbufferStorage;
 PFNGLFRAMEBUFFERRENDERBUFFERPROC tfx_glFramebufferRenderbuffer;
+PFNGLFRAMEBUFFERTEXTUREPROC tfx_glFramebufferTexture;
+PFNGLDRAWBUFFERSPROC tfx_glDrawBuffers;
+PFNGLREADBUFFERPROC tfx_glReadBuffer;
 PFNGLCHECKFRAMEBUFFERSTATUSPROC tfx_glCheckFramebufferStatus;
 PFNGLGETUNIFORMLOCATIONPROC tfx_glGetUniformLocation;
 PFNGLRELEASESHADERCOMPILERPROC tfx_glReleaseShaderCompiler;
@@ -356,6 +362,9 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glBindRenderbuffer = get_proc_address("glBindRenderbuffer");
 	tfx_glRenderbufferStorage = get_proc_address("glRenderbufferStorage");
 	tfx_glFramebufferRenderbuffer = get_proc_address("glFramebufferRenderbuffer");
+	tfx_glFramebufferTexture = get_proc_address("glFramebufferTexture");
+	tfx_glDrawBuffers = get_proc_address("glDrawBuffers");
+	tfx_glReadBuffer = get_proc_address("glReadBuffer");
 	tfx_glCheckFramebufferStatus = get_proc_address("glCheckFramebufferStatus");
 	tfx_glGetUniformLocation = get_proc_address("glGetUniformLocation");
 	tfx_glReleaseShaderCompiler = get_proc_address("glReleaseShaderCompiler");
@@ -481,6 +490,7 @@ tfx_caps tfx_get_caps() {
 	}
 
 	bool gl30 = g_platform_data.context_version >= 30 && !g_platform_data.use_gles;
+	bool gl32 = g_platform_data.context_version >= 32 && !g_platform_data.use_gles;
 	bool gl33 = g_platform_data.context_version >= 33 && !g_platform_data.use_gles;
 	bool gl43 = g_platform_data.context_version >= 43 && !g_platform_data.use_gles;
 	bool gles30 = g_platform_data.context_version >= 30 && g_platform_data.use_gles;
@@ -493,6 +503,7 @@ tfx_caps tfx_get_caps() {
 	caps.debug_output = available_exts[4].supported || gl43;
 	caps.memory_info = available_exts[6].supported;
 	caps.instancing = available_exts[7].supported || gl33 || gles30;
+	caps.seamless_cubemap = available_exts[8].supported || gl32;
 
 	return caps;
 }
@@ -1297,6 +1308,72 @@ void tfx_texture_free(tfx_texture *tex) {
 	}
 }
 
+tfx_canvas mk_cube_canvas(tfx_canvas canvas, uint16_t flags) {
+	bool gen_mips = (flags & TFX_TEXTURE_GEN_MIPS) == TFX_TEXTURE_GEN_MIPS;
+
+	GLuint color_tex = 0;
+	CHECK(tfx_glGenTextures(1, &color_tex));
+	CHECK(tfx_glBindTexture(GL_TEXTURE_CUBE_MAP, color_tex));
+	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE));
+	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
+	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR));
+	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+
+	bool hdr = (canvas.format & TFX_FORMAT_RG11B10F) == TFX_FORMAT_RG11B10F;
+	GLenum fmt = GL_RGBA8;
+	GLenum type = GL_UNSIGNED_BYTE;
+	if (hdr) {
+		fmt = GL_R11F_G11F_B10F;
+		type = GL_FLOAT;
+	}
+	GLuint size = canvas.width;
+	for (int i = 0; i < 6; i++) {
+		CHECK(tfx_glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, fmt, size, size, 0, GL_BGRA, type, NULL));
+	}
+	if (gen_mips) {
+		CHECK(tfx_glGenerateMipmap(GL_TEXTURE_CUBE_MAP));
+	}
+
+	GLuint depth_tex = 0;
+	CHECK(tfx_glGenTextures(1, &depth_tex));
+	CHECK(tfx_glBindTexture(GL_TEXTURE_CUBE_MAP, depth_tex));
+	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE));
+	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
+	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
+	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+	for (int i = 0; i < 6; i++) {
+		CHECK(tfx_glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_DEPTH_COMPONENT16, size, size, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, NULL));
+	}
+
+	GLuint fb = 0;
+	CHECK(tfx_glGenFramebuffers(1, &fb));
+	CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, fb));
+	CHECK(tfx_glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, color_tex, 0));
+	CHECK(tfx_glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, depth_tex, 0));
+
+	GLuint buffer = GL_COLOR_ATTACHMENT0;
+	CHECK(tfx_glDrawBuffers(1, &buffer));
+	CHECK(tfx_glReadBuffer(GL_COLOR_ATTACHMENT0));
+
+	GLenum status = CHECK(tfx_glCheckFramebufferStatus(GL_FRAMEBUFFER));
+	if (status != GL_FRAMEBUFFER_COMPLETE) {
+		assert(false);
+		// TODO: return something more error-y
+		return canvas;
+	}
+
+	int idx = 0;
+	canvas.gl_ids[idx++] = color_tex;
+	canvas.gl_ids[idx++] = depth_tex;
+	canvas.gl_fbo = fb;
+	canvas.allocated += 1;
+	canvas.mipmaps = gen_mips;
+
+	return canvas;
+}
+
 tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format, uint16_t flags) {
 	tfx_canvas c;
 	memset(&c, 0, sizeof(tfx_canvas));
@@ -1305,6 +1382,10 @@ tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format, uint16_t fl
 	c.width  = w;
 	c.height = h;
 	c.format = format;
+
+	if ((flags & TFX_TEXTURE_CUBE) == TFX_TEXTURE_CUBE) {
+		return mk_cube_canvas(c, flags);
+	}
 
 	GLenum color_format = 0;
 	GLenum depth_format = 0;
@@ -1470,11 +1551,12 @@ void tfx_view_set_name(uint8_t id, const char *name) {
 	view->name = name;
 }
 
-void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas) {
+void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas, int layer) {
 	tfx_view *view = &g_views[id];
 	assert(view != NULL);
 	view->has_canvas = true;
 	view->canvas = *canvas;
+	view->canvas_layer = layer;
 }
 
 void tfx_view_set_clear_color(uint8_t id, int color) {
@@ -1601,6 +1683,13 @@ tfx_texture tfx_get_texture(tfx_canvas *canvas, uint8_t index) {
 	tex.gl_ids[0] = canvas->gl_ids[index];
 	tex.width = canvas->width;
 	tex.height = canvas->height;
+
+	if (canvas->mipmaps) {
+		tex.flags |= TFX_TEXTURE_GEN_MIPS;
+	}
+	if (canvas->cube) {
+		tex.flags |= TFX_TEXTURE_CUBE;
+	}
 
 	return tex;
 }
@@ -1793,6 +1882,12 @@ tfx_stats tfx_frame() {
 
 	//CHECK(tfx_glEnable(GL_FRAMEBUFFER_SRGB));
 
+	// I'm not aware of any situation this is available but undesirable,
+	// so we use it unconditionally if possible.
+	if (g_caps.seamless_cubemap) {
+		CHECK(tfx_glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS));
+	}
+
 	GLuint vao;
 	if (tfx_glGenVertexArrays && tfx_glBindVertexArray) {
 		CHECK(tfx_glGenVertexArrays(1, &vao));
@@ -1914,9 +2009,15 @@ tfx_stats tfx_frame() {
 		CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, canvas->gl_fbo));
 		CHECK(tfx_glViewport(0, 0, canvas->width, canvas->height));
 
+		if (canvas->cube) {
+			CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + view->canvas_layer, canvas->gl_ids[0], 0));
+			CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,  GL_TEXTURE_CUBE_MAP_POSITIVE_X + view->canvas_layer, canvas->gl_ids[1], 0));
+		}
+
 		if (last_canvas && canvas != last_canvas && last_canvas->mipmaps) {
-			tfx_glBindTexture(GL_TEXTURE_2D, last_canvas->gl_ids[0]);
-			tfx_glGenerateMipmap(GL_TEXTURE_2D);
+			GLenum fmt = last_canvas->cube ? GL_TEXTURE_CUBE_MAP : GL_TEXTURE_2D;
+			tfx_glBindTexture(fmt, last_canvas->gl_ids[0]);
+			tfx_glGenerateMipmap(fmt);
 		}
 		last_canvas = canvas;
 
@@ -2157,7 +2258,10 @@ tfx_stats tfx_frame() {
 				tfx_texture *tex = &draw.textures[i];
 				if (tex->gl_ids[tex->gl_idx] != 0) {
 					CHECK(tfx_glActiveTexture(GL_TEXTURE0 + i));
-					CHECK(tfx_glBindTexture(GL_TEXTURE_2D, tex->gl_ids[tex->gl_idx]));
+
+					bool cube = (tex->flags & TFX_TEXTURE_CUBE) == TFX_TEXTURE_CUBE;
+					GLenum fmt = cube ? GL_TEXTURE_CUBE_MAP : GL_TEXTURE_2D;
+					CHECK(tfx_glBindTexture(fmt, tex->gl_ids[tex->gl_idx]));
 #ifdef TFX_DEBUG
 					assert(tex->gl_ids[tex->gl_idx] > 0);
 #endif

@@ -62,12 +62,22 @@ enum {
 };
 
 enum {
+	TFX_CUBE_MAP_POSITIVE_X = 0,
+	TFX_CUBE_MAP_NEGATIVE_X = 1,
+	TFX_CUBE_MAP_POSITIVE_Y = 2,
+	TFX_CUBE_MAP_NEGATIVE_Y = 3,
+	TFX_CUBE_MAP_POSITIVE_Z = 4,
+	TFX_CUBE_MAP_NEGATIVE_Z = 5
+};
+
+enum {
 	TFX_TEXTURE_FILTER_POINT = 1 << 0,
 	TFX_TEXTURE_FILTER_LINEAR  = 1 << 1,
 	//TFX_TEXTURE_FILTER_ANISOTROPIC = 1 << 2,
 	TFX_TEXTURE_CPU_WRITABLE = 1 << 3,
 	// TFX_TEXTURE_GPU_WRITABLE = 1 << 4,
-	TFX_TEXTURE_GEN_MIPS = 1 << 5
+	TFX_TEXTURE_GEN_MIPS = 1 << 5,
+	TFX_TEXTURE_CUBE = 1 << 6
 };
 
 typedef enum tfx_format {
@@ -76,7 +86,7 @@ typedef enum tfx_format {
 	TFX_FORMAT_RGBA8,
 
 	// TFX_FORMAT_RGB10A2,
-	// TFX_FORMAT_RG11B10F,
+	TFX_FORMAT_RG11B10F,
 	// TFX_FORMAT_RGBA16F,
 
 	// color + depth
@@ -151,6 +161,7 @@ typedef struct tfx_canvas {
 	uint16_t height;
 	tfx_format format;
 	bool mipmaps;
+	bool cube;
 } tfx_canvas;
 
 typedef enum tfx_component_type {
@@ -218,6 +229,7 @@ typedef struct tfx_caps {
 	bool debug_output;
 	bool memory_info;
 	bool instancing;
+	bool seamless_cubemap;
 } tfx_caps;
 
 // TODO
@@ -249,7 +261,7 @@ TFX_API tfx_texture tfx_get_texture(tfx_canvas *canvas, uint8_t index);
 TFX_API tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format, uint16_t flags);
 
 TFX_API void tfx_view_set_name(uint8_t id, const char *name);
-TFX_API void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas);
+TFX_API void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas, int layer);
 TFX_API void tfx_view_set_clear_color(uint8_t id, int color);
 TFX_API void tfx_view_set_clear_depth(uint8_t id, float depth);
 TFX_API void tfx_view_set_depth_test(uint8_t id, tfx_depth_test mode);

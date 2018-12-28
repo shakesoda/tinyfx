@@ -57,8 +57,8 @@ namespace tfx {
 		View(uint8_t _id) {
 			this->id = _id;
 		}
-		inline void set_canvas(Canvas *canvas) {
-			tfx_view_set_canvas(this->id, &canvas->canvas);
+		inline void set_canvas(Canvas *canvas, int layer = 0) {
+			tfx_view_set_canvas(this->id, &canvas->canvas, layer);
 		}
 		inline void set_clear_color(int color = 0x000000ff) {
 			tfx_view_set_clear_color(this->id, color);
