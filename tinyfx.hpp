@@ -10,11 +10,14 @@ namespace tfx {
 		VertexFormat() {
 			this->fmt = tfx_vertex_format_start();
 		}
-		inline void add(size_t count, tfx_component_type type = TFX_TYPE_FLOAT, bool normalized = false) {
-			tfx_vertex_format_add(&this->fmt, count, normalized, type);
+		inline void add(size_t count, uint8_t slot, bool normalized = false, tfx_component_type type = TFX_TYPE_FLOAT) {
+			tfx_vertex_format_add(&this->fmt, slot, count, normalized, type);
 		}
 		inline void end() {
 			tfx_vertex_format_end(&this->fmt);
+		}
+		inline size_t offset(uint8_t slot) {
+			return tfx_vertex_format_offset(&this->fmt, slot);
 		}
 	};
 
@@ -44,8 +47,8 @@ namespace tfx {
 
 	struct Canvas {
 		tfx_canvas canvas;
-		Canvas(uint16_t w, uint16_t h, tfx_format format = TFX_FORMAT_RGBA8_D16) {
-			this->canvas = tfx_canvas_new(w, h, format);
+		Canvas(uint16_t w, uint16_t h, tfx_format format = TFX_FORMAT_RGBA8_D16, uint16_t flags = TFX_TEXTURE_FILTER_POINT) {
+			this->canvas = tfx_canvas_new(w, h, format, flags);
 		}
 	};
 
@@ -54,8 +57,8 @@ namespace tfx {
 		View(uint8_t _id) {
 			this->id = _id;
 		}
-		inline void set_canvas(Canvas *canvas) {
-			tfx_view_set_canvas(this->id, &canvas->canvas);
+		inline void set_canvas(Canvas *canvas, int layer = 0) {
+			tfx_view_set_canvas(this->id, &canvas->canvas, layer);
 		}
 		inline void set_clear_color(int color = 0x000000ff) {
 			tfx_view_set_clear_color(this->id, color);
@@ -88,8 +91,8 @@ namespace tfx {
 
 	struct Texture {
 		tfx_texture texture;
-		Texture(uint16_t w, uint16_t h, void *data = NULL, bool gen_mips = true, tfx_format format = TFX_FORMAT_RGBA8, uint16_t flags = TFX_TEXTURE_FILTER_LINEAR) {
-			this->texture = tfx_texture_new(w, h, data, gen_mips, format, flags);
+		Texture(uint16_t w, uint16_t h, void *data = NULL, tfx_format format = TFX_FORMAT_RGBA8, uint16_t flags = TFX_TEXTURE_FILTER_LINEAR) {
+			this->texture = tfx_texture_new(w, h, data, format, flags);
 		}
 	};
 
@@ -123,10 +126,10 @@ namespace tfx {
 	}
 	inline void set_uniform(Uniform &uniform, float data) {
 		float tmp = data;
-		tfx_set_uniform(&uniform.uniform, &tmp);
+		tfx_set_uniform(&uniform.uniform, &tmp, -1);
 	}
 	inline void set_uniform(Uniform &uniform, float *data) {
-		tfx_set_uniform(&uniform.uniform, data);
+		tfx_set_uniform(&uniform.uniform, data, -1);
 	}
 	inline void set_texture(Uniform &uniform, Texture &texture, uint8_t slot) {
 		tfx_set_texture(&uniform.uniform, &texture.texture, slot);

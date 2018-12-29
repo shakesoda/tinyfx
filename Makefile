@@ -2,7 +2,7 @@ OUTPUT  =tinyfx
 # shut up stb.h warnings that show up when we are using -Wall...
 SHUTUP  =-Wno-pointer-to-int-cast -Wno-unused-function -Wno-unused-but-set-variable -Wno-unused-value
 CFLAGS  =-fPIC -Wall -Wno-deprecated-declarations -ftree-vectorize -pipe -Wno-psabi $(SHUTUP) -I. -ggdb
-LDFLAGS =-lGLESv2 -lpthread -lrt -ldl -lm
+LDFLAGS = -lpthread -lrt -ldl -lm
 EXAMPLES = examples/01-triangle.c
 SOURCES = tinyfx.c $(EXAMPLES)
 OBJECTS = $(SOURCES:.c=.o)
