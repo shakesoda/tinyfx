@@ -1,5 +1,5 @@
 # TinyFX
-Small OpenGL ES2+ renderer inspired by [BGFX](https://github.com/bkaradzic/bgfx).
+Small OpenGL ES2+ renderer inspired by [BGFX](https://github.com/bkaradzic/bgfx). Check `myon` branch for latest work (may not work correctly on older GL - targets ES3.1).
 
 ## Features
 - Reorders draw calls to minimize state changes and avoid overdraw (in progress)
@@ -21,9 +21,6 @@ Anyone sick of remembering when you need barriers, implementing a state tracker 
 BGFX is great if you need to support multiple backends (I don't) and you care to deal with keeping its dependencies synced. I wanted something (much) smaller which builds quickly on RPi, has a reasonable feature set and doesn't require that you use additional tooling which is a pain for prototyping.
 
 BGFX is faster, more mature and more featureful if you need it. It's also entirely possible to start with TinyFX and switch to BGFX later, as the APIs are (intentionally) very similar.
-
-### *Is this some kind of triangle generator?*
-why do I keep getting asked this
 
 ## Using TinyFX
 1. Include `tinyfx.c` in your build
