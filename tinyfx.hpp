@@ -115,8 +115,8 @@ namespace tfx {
 	inline void touch(uint8_t id) {
 		tfx_touch(id);
 	}
-	inline void reset(uint16_t width, uint16_t height) {
-		tfx_reset(width, height);
+	inline void reset(uint16_t width, uint16_t height, tfx_reset_flags flags = TFX_RESET_NONE) {
+		tfx_reset(width, height, flags);
 	}
 	inline void shutdown() {
 		tfx_shutdown();

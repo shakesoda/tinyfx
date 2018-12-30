@@ -19,8 +19,8 @@
 extern "C" {
 #endif
 
-// TODO: grab function pointers at runtime...
-// TODO: restore support for GL < 4.3
+// TODO: look into just keeping the stuff from GL header in here, this thing
+// isn't included on many systems and is kind of annoying to always need.
 #include <GL/glcorearb.h>
 #include <stdarg.h>
 #include <string.h>
@@ -804,15 +804,26 @@ uint32_t tfx_transient_buffer_get_available(tfx_vertex_format *fmt) {
 	return avail;
 }
 
-void tfx_reset(uint16_t width, uint16_t height) {
+static tfx_program *g_programs = NULL;
+static tfx_texture *g_textures = NULL;
+static tfx_reset_flags g_flags = TFX_RESET_NONE;
+static float g_max_aniso = 0.0f;
+
+void tfx_reset(uint16_t width, uint16_t height, tfx_reset_flags flags) {
 	if (g_platform_data.gl_get_proc_address != NULL) {
 		load_em_up(g_platform_data.gl_get_proc_address);
 	}
+
 
 	g_caps = tfx_get_caps();
 	// we require these, unless/until backporting for pre-compute HW.
 	assert(g_caps.instancing);
 	assert(g_caps.compute);
+
+	g_flags = TFX_RESET_NONE;
+	if (g_caps.anisotropic_filtering && (flags & TFX_RESET_MAX_ANISOTROPY) == TFX_RESET_MAX_ANISOTROPY) {
+		g_flags |= TFX_RESET_MAX_ANISOTROPY;
+	}
 
 	memset(&g_backbuffer, 0, sizeof(tfx_canvas));
 	g_backbuffer.allocated = 1;
@@ -836,6 +847,28 @@ void tfx_reset(uint16_t width, uint16_t height) {
 		g_uniform_map = tfx_progmap_new();
 	}
 
+	// update every already loaded texture's anisotropy to max (typically 16) or 0
+	if (g_caps.anisotropic_filtering) {
+		g_max_aniso = 0.0f;
+		GLenum GL_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FE;
+		if ((g_flags & TFX_RESET_MAX_ANISOTROPY) == TFX_RESET_MAX_ANISOTROPY) {
+			GLenum GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FF;
+			CHECK(tfx_glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &g_max_aniso));
+		}
+		int nt = sb_count(g_textures);
+		for (int i = 0; i < nt; i++) {
+			tfx_texture *tex = &g_textures[i];
+			for (unsigned j = 0; j < tex->gl_count; j++) {
+				GLenum fmt = GL_TEXTURE_2D;
+				if ((tex->flags & TFX_TEXTURE_CUBE) == TFX_TEXTURE_CUBE) {
+					fmt = GL_TEXTURE_CUBE_MAP;
+				}
+				CHECK(tfx_glBindTexture(fmt, tex->gl_ids[j]));
+				CHECK(tfx_glTexParameterf(fmt, GL_TEXTURE_MAX_ANISOTROPY_EXT, g_max_aniso));
+			}
+		}
+	}
+
 #ifdef _MSC_VER
 	if (g_caps.memory_info) {
 		GLint memory;
@@ -849,9 +882,6 @@ void tfx_reset(uint16_t width, uint16_t height) {
 
 	memset(&g_views, 0, sizeof(tfx_view)*VIEW_MAX);
 }
-
-static tfx_program *g_programs = NULL;
-static tfx_texture *g_textures = NULL;
 
 void tfx_shutdown() {
 	tfx_frame();
@@ -1276,10 +1306,10 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, tfx_format forma
 		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
 		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
 
-		//float aniso = 0.0f;
-		//glBindTexture(GL_TEXTURE_2D, texName);
-		//glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &aniso);
-		//glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, aniso);
+		if ((g_flags & TFX_RESET_MAX_ANISOTROPY) == TFX_RESET_MAX_ANISOTROPY) {
+			GLenum GL_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FE;
+			CHECK(tfx_glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, g_max_aniso));
+		}
 
 		CHECK(tfx_glPixelStorei(GL_UNPACK_ALIGNMENT, 1));
 		CHECK(tfx_glTexImage2D(GL_TEXTURE_2D, 0, params->internal_format, w, h, 0, params->format, params->type, data));
@@ -1327,15 +1357,10 @@ tfx_canvas mk_cube_canvas(tfx_canvas canvas, uint16_t flags) {
 	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR));
 	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
 
-	/*
-	if (g_caps.anisotropic_filtering) {
-		float aniso = 0.0f;
-		GLenum GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FF;
+	if ((g_flags & TFX_RESET_MAX_ANISOTROPY) == TFX_RESET_MAX_ANISOTROPY) {
 		GLenum GL_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FE;
-		CHECK(tfx_glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &aniso));
-		CHECK(tfx_glTexParameterf(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAX_ANISOTROPY_EXT, aniso));
+		CHECK(tfx_glTexParameterf(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAX_ANISOTROPY_EXT, g_max_aniso));
 	}
-	*/
 
 	bool hdr = (canvas.format & TFX_FORMAT_RG11B10F) == TFX_FORMAT_RG11B10F;
 	GLenum fmt = GL_RGBA8;

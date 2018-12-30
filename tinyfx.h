@@ -80,6 +80,13 @@ enum {
 	TFX_TEXTURE_CUBE = 1 << 6
 };
 
+typedef enum tfx_reset_flags {
+	TFX_RESET_NONE = 0,
+	TFX_RESET_MAX_ANISOTROPY = 1 << 0,
+	// TFX_RESET_DEBUG...
+	// TFX_RESET_VR
+} tfx_reset_flags;
+
 typedef enum tfx_format {
 	// color only
 	TFX_FORMAT_RGB565 = 0,
@@ -241,7 +248,7 @@ TFX_API void tfx_set_platform_data(tfx_platform_data pd);
 
 TFX_API tfx_caps tfx_get_caps();
 TFX_API void tfx_dump_caps();
-TFX_API void tfx_reset(uint16_t width, uint16_t height);
+TFX_API void tfx_reset(uint16_t width, uint16_t height, tfx_reset_flags flags);
 TFX_API void tfx_shutdown();
 
 TFX_API tfx_vertex_format tfx_vertex_format_start();
