@@ -286,6 +286,7 @@ TFX_API void tfx_view_get_dimensions(uint8_t id, uint16_t *w, uint16_t *h);
 // TFX_API void tfx_view_set_transform(uint8_t id, float *view, float *proj_l, float *proj_r);
 
 TFX_API tfx_program tfx_program_new(const char *vss, const char *fss, const char *attribs[]);
+TFX_API tfx_program tfx_program_gs_new(const char *gss, const char *vss, const char *fss, const char *attribs[]);
 TFX_API tfx_program tfx_program_cs_new(const char *css);
 
 TFX_API tfx_uniform tfx_uniform_new(const char *name, tfx_uniform_type type, int count);

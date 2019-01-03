@@ -268,6 +268,7 @@ PFNGLTEXPARAMETERIPROC tfx_glTexParameteri;
 PFNGLTEXPARAMETERFPROC tfx_glTexParameterf;
 PFNGLPIXELSTOREIPROC tfx_glPixelStorei;
 PFNGLTEXIMAGE2DPROC tfx_glTexImage2D;
+PFNGLTEXIMAGE3DPROC tfx_glTexImage3D;
 PFNGLTEXSUBIMAGE2DPROC tfx_glTexSubImage2D;
 PFNGLGENERATEMIPMAPPROC tfx_glGenerateMipmap;
 PFNGLGENFRAMEBUFFERSPROC tfx_glGenFramebuffers;
@@ -358,6 +359,7 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glTexParameterf = get_proc_address("glTexParameterf");
 	tfx_glPixelStorei = get_proc_address("glPixelStorei");
 	tfx_glTexImage2D = get_proc_address("glTexImage2D");
+	tfx_glTexImage3D = get_proc_address("glTexImage3D");
 	tfx_glTexSubImage2D = get_proc_address("glTexSubImage2D");
 	tfx_glGenerateMipmap = get_proc_address("glGenerateMipmap");
 	tfx_glGenFramebuffers = get_proc_address("glGenFramebuffers");
@@ -939,40 +941,6 @@ static void pop_group() {
 	}
 }
 
-static GLuint load_shader(GLenum type, const char *shaderSrc) {
-	g_shaderc_allocated = true;
-
-	GLuint shader = CHECK(tfx_glCreateShader(type));
-	if (!shader) {
-		TFX_FATAL("%s", "Something has gone horribly wrong, and we can't make shaders.");
-		return 0;
-	}
-
-	CHECK(tfx_glShaderSource(shader, 1, &shaderSrc, NULL));
-	CHECK(tfx_glCompileShader(shader));
-
-	GLint compiled;
-	CHECK(tfx_glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled));
-	if (!compiled) {
-		GLint infoLen = 0;
-		CHECK(tfx_glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &infoLen));
-		if (infoLen > 0) {
-			char* infoLog = (char*)malloc(sizeof(char) * infoLen);
-			CHECK(tfx_glGetShaderInfoLog(shader, infoLen, NULL, infoLog));
-			TFX_ERROR("Error compiling shader:\n%s", infoLog);
-#ifdef _MSC_VER
-			OutputDebugString(infoLog);
-#endif
-			free(infoLog);
-		}
-		CHECK(tfx_glDeleteShader(shader));
-		assert(compiled);
-		return 0;
-	}
-
-	return shader;
-}
-
 const char *legacy_vs_prepend = ""
 	"#ifndef GL_ES\n"
 	"#define lowp\n"
@@ -1000,6 +968,13 @@ const char *legacy_fs_prepend = ""
 	"#endif\n"
 	"#pragma optionNV(strict on)\n"
 	"#define PIXEL 1\n"
+	"#line 1\n"
+;
+const char *gs_prepend = ""
+	"#ifdef GL_ES\n"
+	"precision highp float;\n"
+	"#endif\n"
+	"#define GEOMETRY 1\n"
 	"#line 1\n"
 ;
 const char *vs_prepend = ""
@@ -1041,16 +1016,30 @@ static char *sappend(const char *left, const char *right) {
 	return ss;
 }
 
-tfx_program tfx_program_new(const char *_vss, const char *_fss, const char *attribs[]) {
-	char *vss1, *fss1;
-	if (g_platform_data.context_version < 30) {
-		vss1 = sappend(legacy_vs_prepend, _vss);
-		fss1 = sappend(legacy_fs_prepend, _fss);
+static char *shader_concat(const char *base, GLenum shader_type) {
+	bool legacy = g_platform_data.context_version < 30;
+
+	const char *prepend = "";
+	const char *append = "";
+
+	switch (shader_type) {
+		case GL_VERTEX_SHADER: {
+			prepend = legacy ? legacy_vs_prepend : vs_prepend;
+			append = vs_append;
+			break;
+		}
+		case GL_FRAGMENT_SHADER: {
+			prepend = legacy ? legacy_fs_prepend: fs_prepend;
+			break;
+		}
+		case GL_GEOMETRY_SHADER: {
+			prepend = gs_prepend;
+			break;
+		}
+		default: break;
 	}
-	else {
-		vss1 = sappend(vs_prepend, _vss);
-		fss1 = sappend(fs_prepend, _fss);
-	}
+
+	char *ss1 = sappend(prepend, base);
 
 	char version[64];
 	int gl_major = g_platform_data.context_version / 10;
@@ -1071,24 +1060,85 @@ tfx_program tfx_program_new(const char *_vss, const char *_fss, const char *attr
 	}
 	snprintf(version, 64, "#version %d%d0%s\n", gl_major, gl_minor, suffix);
 
-	char *vss2 = sappend(vss1, vs_append);
-	free(vss1);
+	char *ss2 = sappend(ss1, append);
+	free(ss1);
 
-	char *vss = sappend(version, vss2);
-	char *fss = sappend(version, fss1);
-	free(vss2);
-	free(fss1);
+	char *ss = sappend(version, ss2);
+	free(ss2);
 
-	GLuint vs = load_shader(GL_VERTEX_SHADER, vss);
-	GLuint fs = load_shader(GL_FRAGMENT_SHADER, fss);
+	return ss;
+}
+
+static GLuint load_shader(GLenum type, const char *shaderSrc) {
+	g_shaderc_allocated = true;
+
+	GLuint shader = CHECK(tfx_glCreateShader(type));
+	if (!shader) {
+		TFX_FATAL("%s", "Something has gone horribly wrong, and we can't make shaders.");
+		return 0;
+	}
+
+	char *ss = shader_concat(shaderSrc, type);
+	CHECK(tfx_glShaderSource(shader, 1, &ss, NULL));
+	CHECK(tfx_glCompileShader(shader));
+
+	GLint compiled;
+	CHECK(tfx_glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled));
+	if (!compiled) {
+		GLint infoLen = 0;
+		CHECK(tfx_glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &infoLen));
+		if (infoLen > 0) {
+			char* infoLog = (char*)malloc(sizeof(char) * infoLen);
+			CHECK(tfx_glGetShaderInfoLog(shader, infoLen, NULL, infoLog));
+			TFX_ERROR("Error compiling shader:\n%s", infoLog);
+#ifdef _MSC_VER
+			OutputDebugString(infoLog);
+#endif
+			free(infoLog);
+		}
+		CHECK(tfx_glDeleteShader(shader));
+		assert(compiled);
+		free(ss);
+		return 0;
+	}
+	// free this a bit late to make debugging easier
+	free(ss);
+	return shader;
+}
+
+static bool try_program_link(GLuint program) {
+	CHECK(tfx_glLinkProgram(program));
+	GLint linked;
+	CHECK(tfx_glGetProgramiv(program, GL_LINK_STATUS, &linked));
+	if (!linked) {
+		GLint infoLen = 0;
+		CHECK(tfx_glGetProgramiv(program, GL_INFO_LOG_LENGTH, &infoLen));
+		if (infoLen > 0) {
+			char* infoLog = (char*)malloc(infoLen);
+			CHECK(tfx_glGetProgramInfoLog(program, infoLen, NULL, infoLog));
+			TFX_ERROR("Error linking program:\n%s", infoLog);
+			free(infoLog);
+		}
+		return false;
+	}
+	return true;
+}
+
+tfx_program tfx_program_gs_new(const char *_gss, const char *_vss, const char *_fss, const char *attribs[]) {
+	GLuint gs = 0;
+	if (_gss) {
+		gs = load_shader(GL_GEOMETRY_SHADER, _gss);
+	}
+	GLuint vs = load_shader(GL_VERTEX_SHADER, _vss);
+	GLuint fs = load_shader(GL_FRAGMENT_SHADER, _fss);
 	GLuint program = CHECK(tfx_glCreateProgram());
 	if (!program) {
 		return 0;
 	}
 
-	free(vss);
-	free(fss);
-
+	if (gs) {
+		CHECK(tfx_glAttachShader(program, gs));
+	}
 	CHECK(tfx_glAttachShader(program, vs));
 	CHECK(tfx_glAttachShader(program, fs));
 
@@ -1105,23 +1155,14 @@ tfx_program tfx_program_new(const char *_vss, const char *_fss, const char *attr
 		//CHECK(tfx_glBindFragDataLocation(program, 0, "out_color"));
 	}
 
-	CHECK(tfx_glLinkProgram(program));
-
-	GLint linked;
-	CHECK(tfx_glGetProgramiv(program, GL_LINK_STATUS, &linked));
-	if (!linked) {
-		GLint infoLen = 0;
-		CHECK(tfx_glGetProgramiv(program, GL_INFO_LOG_LENGTH, &infoLen));
-		if (infoLen > 0) {
-			char* infoLog = (char*)malloc(infoLen);
-			CHECK(tfx_glGetProgramInfoLog(program, infoLen, NULL, infoLog));
-			TFX_ERROR("Error linking program:\n%s", infoLog);
-			free(infoLog);
-		}
+	if (!try_program_link(program)) {
 		CHECK(tfx_glDeleteProgram(program));
 		return 0;
 	}
 
+	if (gs) {
+		CHECK(tfx_glDeleteShader(gs));
+	}
 	CHECK(tfx_glDeleteShader(vs));
 	CHECK(tfx_glDeleteShader(fs));
 
@@ -1141,19 +1182,7 @@ tfx_program tfx_program_cs_new(const char *css) {
 		return 0;
 	}
 	CHECK(tfx_glAttachShader(program, cs));
-	CHECK(tfx_glLinkProgram(program));
-
-	GLint linked;
-	CHECK(tfx_glGetProgramiv(program, GL_LINK_STATUS, &linked));
-	if (!linked) {
-		GLint infoLen = 0;
-		CHECK(tfx_glGetProgramiv(program, GL_INFO_LOG_LENGTH, &infoLen));
-		if (infoLen > 0) {
-			char* infoLog = (char*)malloc(infoLen);
-			CHECK(tfx_glGetProgramInfoLog(program, infoLen, NULL, infoLog));
-			TFX_ERROR("Error linking program:\n%s", infoLog);
-			free(infoLog);
-		}
+	if (!try_program_link(program)) {
 		CHECK(tfx_glDeleteProgram(program));
 		return 0;
 	}
@@ -1162,6 +1191,10 @@ tfx_program tfx_program_cs_new(const char *css) {
 	sb_push(g_programs, program);
 
 	return program;
+}
+
+tfx_program tfx_program_new(const char *_vss, const char *_fss, const char *attribs[]) {
+	return tfx_program_gs_new(NULL, _vss, _fss, attribs);
 }
 
 tfx_vertex_format tfx_vertex_format_start() {
@@ -1337,8 +1370,8 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 	bool cube     = (flags & TFX_TEXTURE_CUBE) == TFX_TEXTURE_CUBE;
 	GLenum mode = 0;
 	if (layers > 1) {
-		assert(false);
 		if (cube) {
+			assert(false); // only supported by GL4.0+ or with ARB_texture_cube_map_array
 			mode = GL_TEXTURE_CUBE_MAP_ARRAY;
 		}
 		else {
@@ -1378,13 +1411,15 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 			CHECK(tfx_glTexParameterf(mode, GL_TEXTURE_MAX_ANISOTROPY_EXT, g_max_aniso));
 		}
 
-		if (!cube) {
-			CHECK(tfx_glPixelStorei(GL_UNPACK_ALIGNMENT, 1));
-		}
+		CHECK(tfx_glPixelStorei(GL_UNPACK_ALIGNMENT, 1));
 
 		if (layers > 1) {
-			assert(false);
-			//if (cube) { /* ... */ }
+			if (cube) {
+				assert(false);
+			}
+			else {
+				CHECK(tfx_glTexImage3D(mode, 0, params->internal_format, w, h, layers, 0, params->format, params->type, data));
+			}
 		}
 		if (cube) {
 			uint16_t size = w > h ? w : h;
@@ -1466,16 +1501,12 @@ tfx_canvas tfx_canvas_attachments_new(bool claim_attachments, int count, tfx_tex
 			offset += 1;
 		}
 
-		if (c.cube) {
+		if (c.cube || c.attachments[i].depth > 1) {
 			CHECK(tfx_glFramebufferTexture(GL_FRAMEBUFFER, attach, c.attachments[i].gl_ids[0], 0));
 			continue;
 		}
 
-		GLenum type = GL_TEXTURE_2D;
-		if (layers > 1) {
-			type = GL_TEXTURE_2D_ARRAY;
-		}
-		CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, attach, type, c.attachments[i].gl_ids[0], 0));
+		CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, attach, GL_TEXTURE_2D, c.attachments[i].gl_ids[0], 0));
 		/*
 		// TODO: use RBO if depth texture isn't needed
 		if (depth_format) {
@@ -2113,7 +2144,20 @@ tfx_stats tfx_frame() {
 		CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, canvas->gl_fbo));
 		CHECK(tfx_glViewport(0, 0, canvas->width, canvas->height));
 
-		if (canvas->cube) {
+		// TODO: caps flags for texture array support
+		if (view->canvas_layer < 0 && canvas->attachments[0].depth > 1) {
+			assert(canvas->allocated <= 2);
+			for (unsigned i = 0; i < canvas->allocated; i++) {
+				tfx_texture *attachment = &canvas->attachments[i];
+				if (texture_is_depth(attachment)) {
+					CHECK(tfx_glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, attachment->gl_ids[1], 0));
+				}
+				else {
+					CHECK(tfx_glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, attachment->gl_ids[0], 0));
+				}
+			}
+		}
+		else if (canvas->cube) {
 			// TODO: shadow clone
 			assert(canvas->allocated <= 2);
 			for (unsigned i = 0; i < canvas->allocated; i++) {
@@ -2129,6 +2173,10 @@ tfx_stats tfx_frame() {
 
 		if (last_canvas && canvas != last_canvas && last_canvas->gl_fbo != canvas->gl_fbo) {
 			GLenum fmt = last_canvas->cube ? GL_TEXTURE_CUBE_MAP : GL_TEXTURE_2D;
+			if (last_canvas->attachments[0].depth > 1) {
+				assert(fmt != GL_TEXTURE_CUBE_MAP); // GL4 & not supported yet
+				fmt = GL_TEXTURE_2D_ARRAY;
+			}
 			for (unsigned i = 0; i < last_canvas->allocated; i++) {
 				tfx_texture *attachment = &last_canvas->attachments[i];
 				if ((attachment->flags & TFX_TEXTURE_GEN_MIPS) != TFX_TEXTURE_GEN_MIPS) {
@@ -2380,6 +2428,10 @@ tfx_stats tfx_frame() {
 
 					bool cube = (tex->flags & TFX_TEXTURE_CUBE) == TFX_TEXTURE_CUBE;
 					GLenum fmt = cube ? GL_TEXTURE_CUBE_MAP : GL_TEXTURE_2D;
+					if (tex->depth > 1) {
+						assert(fmt != GL_TEXTURE_CUBE_MAP);
+						fmt = GL_TEXTURE_2D_ARRAY;
+					}
 					CHECK(tfx_glBindTexture(fmt, tex->gl_ids[tex->gl_idx]));
 #ifdef TFX_DEBUG
 					assert(tex->gl_ids[tex->gl_idx] > 0);
