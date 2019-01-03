@@ -832,6 +832,9 @@ void tfx_reset(uint16_t width, uint16_t height, tfx_reset_flags flags) {
 	g_backbuffer.gl_fbo = 0;
 	g_backbuffer.width = width;
 	g_backbuffer.height = height;
+	g_backbuffer.attachments[0].width = width;
+	g_backbuffer.attachments[0].height = height;
+	g_backbuffer.attachments[0].depth = 1;
 
 	if (!g_uniform_buffer) {
 		g_uniform_buffer = (uint8_t*)malloc(TFX_UNIFORM_BUFFER_SIZE);
@@ -2064,6 +2067,7 @@ tfx_stats tfx_frame() {
 
 	tfx_canvas *last_canvas = NULL;
 	int last_count = 0;
+	GLuint last_program = 0;
 
 	for (int id = 0; id < VIEW_MAX; id++) {
 		tfx_view *view = &g_views[id];
@@ -2082,7 +2086,6 @@ tfx_stats tfx_frame() {
 		}
 		push_group(debug_id++, debug_label);
 
-		GLuint program = 0;
 		if (g_caps.compute) {
 			if (cd > 0) {
 				// split compute into its own section because it is infrequently used.
@@ -2091,9 +2094,9 @@ tfx_stats tfx_frame() {
 			}
 			for (int i = 0; i < cd; i++) {
 				tfx_draw job = view->draws[i];
-				if (job.program != program) {
+				if (job.program != last_program) {
 					CHECK(tfx_glUseProgram(job.program));
-					program = job.program;
+					last_program = job.program;
 				}
 				// TODO: bind image textures
 				for (int i = 0; i < 8; i++) {
@@ -2196,9 +2199,6 @@ tfx_stats tfx_frame() {
 			CHECK(tfx_glDisable(GL_SCISSOR_TEST));
 		}
 
-		CHECK(tfx_glColorMask(true, true, true, true));
-		CHECK(tfx_glDepthMask(true));
-
 		GLuint mask = 0;
 		if (view->flags & TFX_VIEW_CLEAR_COLOR) {
 			mask |= GL_COLOR_BUFFER_BIT;
@@ -2210,10 +2210,13 @@ tfx_stats tfx_frame() {
 				((color >>  0) & 0xff) / 255.0f
 			};
 			CHECK(tfx_glClearColor(c[0], c[1], c[2], c[3]));
+			CHECK(tfx_glColorMask(true, true, true, true));
 		}
+
 		if (view->flags & TFX_VIEW_CLEAR_DEPTH) {
 			mask |= GL_DEPTH_BUFFER_BIT;
 			CHECK(tfx_glClearDepthf(view->clear_depth));
+			CHECK(tfx_glDepthMask(true));
 		}
 
 		if (mask != 0) {
@@ -2249,9 +2252,9 @@ tfx_stats tfx_frame() {
 		uint64_t last_flags = 0;
 		for (int i = 0; i < nd; i++) {
 			tfx_draw draw = view->draws[i];
-			if (draw.program != program) {
+			if (draw.program != last_program) {
 				CHECK(tfx_glUseProgram(draw.program));
-				program = draw.program;
+				last_program = draw.program;
 			}
 
 			// on first iteration of a pass, make sure to set everything.
@@ -2324,7 +2327,7 @@ tfx_stats tfx_frame() {
 			for (int j = 0; j < nu; j++) {
 				tfx_uniform uniform = draw.uniforms[j];
 
-				tfx_shadermap *val = tfx_proglookup(g_uniform_map, program);
+				tfx_shadermap *val = tfx_proglookup(g_uniform_map, draw.program);
 				tfx_locmap **locmap = val->value;
 				tfx_locmap *locval = tfx_loclookup(locmap, uniform.name);
 #ifdef TFX_DEBUG
