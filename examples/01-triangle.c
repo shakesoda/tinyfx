@@ -7,7 +7,7 @@ static void run(state_t *state) {
 	pd.context_version = 20;
 	pd.gl_get_proc_address = SDL_GL_GetProcAddress;
 	tfx_set_platform_data(pd);
-	tfx_reset(state->width, state->height);
+	tfx_reset(state->width, state->height, TFX_RESET_NONE);
 
 	uint8_t back = 1;
 	tfx_view_set_clear_color(back, 0x555555ff);
