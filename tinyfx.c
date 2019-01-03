@@ -2012,8 +2012,6 @@ tfx_stats tfx_frame() {
 	tfx_stats stats;
 	memset(&stats, 0, sizeof(tfx_stats));
 
-	int last_count = 0;
-
 	//CHECK(tfx_glEnable(GL_FRAMEBUFFER_SRGB));
 
 	// I'm not aware of any situation this is available but undesirable,
@@ -2065,6 +2063,7 @@ tfx_stats tfx_frame() {
 	char debug_label[256];
 
 	tfx_canvas *last_canvas = NULL;
+	int last_count = 0;
 
 	for (int id = 0; id < VIEW_MAX; id++) {
 		tfx_view *view = &g_views[id];
@@ -2245,7 +2244,6 @@ tfx_stats tfx_frame() {
 			CHECK(tfx_glDisable(GL_DEPTH_TEST));
 		}
 
-
 #define CHANGED(diff, mask) ((diff & mask) != 0)
 
 		uint64_t last_flags = 0;
@@ -2411,10 +2409,14 @@ tfx_stats tfx_frame() {
 					case TFX_TYPE_FLOAT: break;
 					default: assert(false); break;
 				}
-				CHECK(tfx_glEnableVertexAttribArray(real));
+				if (i >= last_count) {
+					CHECK(tfx_glEnableVertexAttribArray(real));
+				}
 				CHECK(tfx_glVertexAttribPointer(real, (GLint)vc.size, gl_type, vc.normalized, (GLsizei)fmt->stride, (GLvoid*)(vc.offset + va_offset)));
 				real += 1;
 			}
+
+			last_count = last_count < 0 ? 0 : last_count;
 			nc = last_count - nc;
 			for (int i = 0; i <= nc; i++) {
 				CHECK(tfx_glDisableVertexAttribArray(last_count - i));
