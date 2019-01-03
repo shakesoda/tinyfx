@@ -1249,12 +1249,23 @@ typedef struct tfx_texture_params {
 	void *update_data;
 } tfx_texture_params;
 
-tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, tfx_format format, uint16_t flags) {
+bool texture_is_depth(tfx_texture *tex) {
+	switch (tex->format) {
+		case TFX_FORMAT_D16: return true;
+		case TFX_FORMAT_D24: return true;
+		//case TFX_FORMAT_D32: return true;
+		default: break;
+	}
+	return false;
+}
+
+tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data, tfx_format format, uint16_t flags) {
 	tfx_texture t;
 	memset(&t, 0, sizeof(tfx_texture));
 
 	t.width = w;
 	t.height = h;
+	t.depth = layers;
 	t.format = format;
 	t.flags = flags;
 
@@ -1271,6 +1282,7 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, tfx_format forma
 	params->update_data = NULL;
 
 	switch (format) {
+		// integer formats
 		case TFX_FORMAT_RGB565:
 			params->format = GL_RGB;
 			params->internal_format = GL_RGB;
@@ -1281,6 +1293,37 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, tfx_format forma
 			params->internal_format = GL_RGBA;
 			params->type = GL_UNSIGNED_BYTE;
 			break;
+		case TFX_FORMAT_RGB10A2:
+			params->format = GL_RGBA;
+			params->internal_format = GL_RGB10_A2;
+			params->type = GL_UNSIGNED_INT_10_10_10_2;
+			break;
+		// float formats
+		case TFX_FORMAT_RG11B10F:
+			params->format = GL_RGB;
+			params->internal_format = GL_R11F_G11F_B10F;
+			params->type = GL_FLOAT;
+			break;
+		case TFX_FORMAT_RGBA16F:
+			params->format = GL_RGBA;
+			params->internal_format = GL_RGBA16F;
+			params->type = GL_FLOAT;
+			break;
+		// depth formats
+		case TFX_FORMAT_D16:
+			params->format = GL_DEPTH_COMPONENT;
+			params->internal_format = GL_DEPTH_COMPONENT16;
+			params->type = GL_UNSIGNED_BYTE;
+			break;
+		case TFX_FORMAT_D24:
+			params->format = GL_DEPTH_COMPONENT;
+			params->internal_format = GL_DEPTH_COMPONENT24;
+			params->type = GL_UNSIGNED_BYTE;
+			break;
+		// invalid
+		case TFX_FORMAT_RGB565_D16:
+		case TFX_FORMAT_RGBA8_D16:
+		case TFX_FORMAT_RGBA8_D24:
 		default:
 			assert(false);
 			break;
@@ -1289,32 +1332,71 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, tfx_format forma
 	t.internal = params;
 
 	CHECK(tfx_glGenTextures(t.gl_count, t.gl_ids));
+	bool aniso = (g_flags & TFX_RESET_MAX_ANISOTROPY) == TFX_RESET_MAX_ANISOTROPY;
+	bool gen_mips = (flags & TFX_TEXTURE_GEN_MIPS) == TFX_TEXTURE_GEN_MIPS;
+	bool cube     = (flags & TFX_TEXTURE_CUBE) == TFX_TEXTURE_CUBE;
+	GLenum mode = 0;
+	if (layers > 1) {
+		assert(false);
+		if (cube) {
+			mode = GL_TEXTURE_CUBE_MAP_ARRAY;
+		}
+		else {
+			mode = GL_TEXTURE_2D_ARRAY;
+		}
+	}
+	else {
+		if (cube) {
+			mode = GL_TEXTURE_CUBE_MAP;
+		}
+		else {
+			mode = GL_TEXTURE_2D;
+		}
+	}
+
 	for (unsigned i = 0; i < t.gl_count; i++) {
 		assert(t.gl_ids[i] > 0);
 
-		bool gen_mips = (flags & TFX_TEXTURE_GEN_MIPS) == TFX_TEXTURE_GEN_MIPS;
-
-		CHECK(tfx_glBindTexture(GL_TEXTURE_2D, t.gl_ids[i]));
+		CHECK(tfx_glBindTexture(mode, t.gl_ids[i]));
 		if ((flags & TFX_TEXTURE_FILTER_POINT) == TFX_TEXTURE_FILTER_POINT) {
-			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
-			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST));
+			CHECK(tfx_glTexParameteri(mode, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST));
+			CHECK(tfx_glTexParameteri(mode, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
 		}
-		else if ((flags & TFX_TEXTURE_FILTER_LINEAR) == TFX_TEXTURE_FILTER_LINEAR || !flags) {
-			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
-			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR));
+		else { // default filter: linear
+			CHECK(tfx_glTexParameteri(mode, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR));
+			CHECK(tfx_glTexParameteri(mode, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
 		}
-		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
-		CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
 
-		if ((g_flags & TFX_RESET_MAX_ANISOTROPY) == TFX_RESET_MAX_ANISOTROPY) {
+		if (cube) {
+			CHECK(tfx_glTexParameteri(mode, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE));
+		}
+		CHECK(tfx_glTexParameteri(mode, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+		CHECK(tfx_glTexParameteri(mode, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
+
+		if (aniso) {
 			GLenum GL_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FE;
-			CHECK(tfx_glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, g_max_aniso));
+			CHECK(tfx_glTexParameterf(mode, GL_TEXTURE_MAX_ANISOTROPY_EXT, g_max_aniso));
 		}
 
-		CHECK(tfx_glPixelStorei(GL_UNPACK_ALIGNMENT, 1));
-		CHECK(tfx_glTexImage2D(GL_TEXTURE_2D, 0, params->internal_format, w, h, 0, params->format, params->type, data));
-		if (gen_mips && data) {
-			CHECK(tfx_glGenerateMipmap(GL_TEXTURE_2D));
+		if (!cube) {
+			CHECK(tfx_glPixelStorei(GL_UNPACK_ALIGNMENT, 1));
+		}
+
+		if (layers > 1) {
+			assert(false);
+			//if (cube) { /* ... */ }
+		}
+		if (cube) {
+			uint16_t size = w > h ? w : h;
+			for (int j = 0; j < 6; j++) {
+				CHECK(tfx_glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + j, 0, params->internal_format, size, size, 0, params->format, params->type, NULL));
+			}
+		}
+		else {
+			CHECK(tfx_glTexImage2D(mode, 0, params->internal_format, w, h, 0, params->format, params->type, data));
+		}
+		if (gen_mips) {
+			CHECK(tfx_glGenerateMipmap(mode));
 		}
 	}
 
@@ -1345,168 +1427,86 @@ void tfx_texture_free(tfx_texture *tex) {
 	}
 }
 
-tfx_canvas mk_cube_canvas(tfx_canvas canvas, uint16_t flags) {
-	bool gen_mips = (flags & TFX_TEXTURE_GEN_MIPS) == TFX_TEXTURE_GEN_MIPS;
-
-	GLuint color_tex = 0;
-	CHECK(tfx_glGenTextures(1, &color_tex));
-	CHECK(tfx_glBindTexture(GL_TEXTURE_CUBE_MAP, color_tex));
-	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE));
-	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
-	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
-	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR));
-	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
-
-	if ((g_flags & TFX_RESET_MAX_ANISOTROPY) == TFX_RESET_MAX_ANISOTROPY) {
-		GLenum GL_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FE;
-		CHECK(tfx_glTexParameterf(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAX_ANISOTROPY_EXT, g_max_aniso));
-	}
-
-	bool hdr = (canvas.format & TFX_FORMAT_RG11B10F) == TFX_FORMAT_RG11B10F;
-	GLenum fmt = GL_RGBA8;
-	GLenum type = GL_UNSIGNED_BYTE;
-	if (hdr) {
-		fmt = GL_R11F_G11F_B10F;
-		type = GL_FLOAT;
-	}
-	GLuint size = canvas.width;
-	for (int i = 0; i < 6; i++) {
-		CHECK(tfx_glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, fmt, size, size, 0, GL_BGRA, type, NULL));
-	}
-	if (gen_mips) {
-		CHECK(tfx_glGenerateMipmap(GL_TEXTURE_CUBE_MAP));
-	}
-
-	GLuint depth_tex = 0;
-	CHECK(tfx_glGenTextures(1, &depth_tex));
-	CHECK(tfx_glBindTexture(GL_TEXTURE_CUBE_MAP, depth_tex));
-	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE));
-	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
-	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
-	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
-	CHECK(tfx_glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
-	for (int i = 0; i < 6; i++) {
-		CHECK(tfx_glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_DEPTH_COMPONENT16, size, size, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, NULL));
-	}
-
-	GLuint fb = 0;
-	CHECK(tfx_glGenFramebuffers(1, &fb));
-	CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, fb));
-	CHECK(tfx_glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, color_tex, 0));
-	CHECK(tfx_glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, depth_tex, 0));
-
-	GLuint buffer = GL_COLOR_ATTACHMENT0;
-	CHECK(tfx_glDrawBuffers(1, &buffer));
-	CHECK(tfx_glReadBuffer(GL_COLOR_ATTACHMENT0));
-
-	GLenum status = CHECK(tfx_glCheckFramebufferStatus(GL_FRAMEBUFFER));
-	if (status != GL_FRAMEBUFFER_COMPLETE) {
-		assert(false);
-		// TODO: return something more error-y
-		return canvas;
-	}
-
-	int idx = 0;
-	canvas.gl_ids[idx++] = color_tex;
-	canvas.gl_ids[idx++] = depth_tex;
-	canvas.gl_fbo = fb;
-	canvas.allocated += 1;
-	canvas.mipmaps = gen_mips;
-	canvas.cube = true;
-
-	return canvas;
-}
-
-tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format, uint16_t flags) {
+tfx_canvas tfx_canvas_attachments_new(bool claim_attachments, int count, tfx_texture *attachments) {
 	tfx_canvas c;
 	memset(&c, 0, sizeof(tfx_canvas));
 
 	c.allocated = 0;
-	c.width  = w;
-	c.height = h;
-	c.format = format;
-
-	if ((flags & TFX_TEXTURE_CUBE) == TFX_TEXTURE_CUBE) {
-		return mk_cube_canvas(c, flags);
-	}
-
-	GLenum color_format = 0;
-	GLenum depth_format = 0;
-	GLenum internal = 0;
-
-	switch (format) {
-		case TFX_FORMAT_RGBA8: {
-			color_format = GL_UNSIGNED_BYTE;
-			internal = GL_RGB;
-			break;
-		}
-		case TFX_FORMAT_RGB565: {
-			color_format = GL_UNSIGNED_SHORT_5_6_5;
-			internal = GL_RGB;
-			break;
-		}
-		case TFX_FORMAT_D16: {
-			depth_format = GL_DEPTH_COMPONENT16;
-			break;
-		}
-		case TFX_FORMAT_RGBA8_D16: {
-			color_format = GL_UNSIGNED_BYTE;
-			depth_format = GL_DEPTH_COMPONENT16;
-			internal = GL_RGBA;
-			break;
-		}
-		case TFX_FORMAT_RGBA8_D24: {
-			color_format = GL_UNSIGNED_BYTE;
-			depth_format = GL_DEPTH_COMPONENT24;
-			internal = GL_RGBA;
-			break;
-		}
-		case TFX_FORMAT_RGB565_D16: {
-			color_format = GL_UNSIGNED_SHORT_5_6_5;
-			depth_format = GL_DEPTH_COMPONENT16;
-			internal = GL_RGB;
-			break;
-		}
-		default: assert(false); break;
-	}
+	c.width = attachments[0].width;
+	c.height = attachments[0].height;
+	c.own_attachments = claim_attachments;
 
 	// and now the fbo.
 	GLuint fbo;
 	CHECK(tfx_glGenFramebuffers(1, &fbo));
 	CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, fbo));
 
-	int idx = 0;
+	uint16_t layers = attachments[0].depth;
 
-	// setup color buffer...
-	if (color_format) {
-		assert(internal != 0);
+	c.cube = (attachments[0].flags & TFX_TEXTURE_CUBE) == TFX_TEXTURE_CUBE;
 
-		GLuint color;
-		CHECK(tfx_glGenTextures(1, &color));
-		c.gl_ids[idx++] = color;
-		CHECK(tfx_glBindTexture(GL_TEXTURE_2D, color));
-		CHECK(tfx_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, internal, color_format, NULL));
+	bool found_color = false;
+	bool found_depth = false;
 
-		bool gen_mips = (flags & TFX_TEXTURE_GEN_MIPS) == TFX_TEXTURE_GEN_MIPS;
-		if ((flags & TFX_TEXTURE_FILTER_POINT) == TFX_TEXTURE_FILTER_POINT) {
-			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
-			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST));
+	int offset = 0;
+	for (int i = 0; i < count; i++) {
+		assert(attachments[i].gl_count == 1); // TODO: bad for msaa
+		assert(attachments[i].depth == layers);
+		assert((attachments[i].flags & TFX_TEXTURE_CPU_WRITABLE) != TFX_TEXTURE_CPU_WRITABLE);
+
+		c.attachments[i] = attachments[i];
+		GLenum attach = GL_COLOR_ATTACHMENT0 + offset;
+		if (texture_is_depth(&attachments[i])) {
+			assert(!found_depth); // two depth buffers, bail
+			attach = GL_DEPTH_ATTACHMENT;
+			found_depth = true;
 		}
-		else if ((flags & TFX_TEXTURE_FILTER_LINEAR) == TFX_TEXTURE_FILTER_LINEAR || !flags) {
-			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
-			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR));
+		else {
+			found_color = true;
+			offset += 1;
 		}
 
-		CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color, 0));
+		if (c.cube) {
+			CHECK(tfx_glFramebufferTexture(GL_FRAMEBUFFER, attach, c.attachments[i].gl_ids[0], 0));
+			continue;
+		}
+
+		GLenum type = GL_TEXTURE_2D;
+		if (layers > 1) {
+			type = GL_TEXTURE_2D_ARRAY;
+		}
+		CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, attach, type, c.attachments[i].gl_ids[0], 0));
+		/*
+		// TODO: use RBO if depth texture isn't needed
+		if (depth_format) {
+			GLuint rbo;
+			CHECK(tfx_glGenRenderbuffers(1, &rbo));
+			CHECK(tfx_glBindRenderbuffer(GL_RENDERBUFFER, rbo));
+			CHECK(tfx_glRenderbufferStorage(GL_RENDERBUFFER, depth_format, w, h));
+			CHECK(tfx_glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rbo));
+		}
+		*/
 	}
 
-	// setup depth buffer...
-	if (depth_format) {
-		GLuint rbo;
-		CHECK(tfx_glGenRenderbuffers(1, &rbo));
-		CHECK(tfx_glBindRenderbuffer(GL_RENDERBUFFER, rbo));
-		CHECK(tfx_glRenderbufferStorage(GL_RENDERBUFFER, depth_format, w, h));
-		CHECK(tfx_glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rbo));
+	if (found_depth && !found_color) {
+		GLenum none = GL_NONE;
+		CHECK(tfx_glDrawBuffers(1, &none));
+		CHECK(tfx_glReadBuffer(GL_NONE));
+	}
+
+	if (found_color) {
+		GLenum buffers[8] = {
+			GL_COLOR_ATTACHMENT0 + 0,
+			GL_COLOR_ATTACHMENT0 + 1,
+			GL_COLOR_ATTACHMENT0 + 2,
+			GL_COLOR_ATTACHMENT0 + 3,
+			GL_COLOR_ATTACHMENT0 + 4,
+			GL_COLOR_ATTACHMENT0 + 5,
+			GL_COLOR_ATTACHMENT0 + 6,
+			GL_COLOR_ATTACHMENT0 + 7
+		};
+		CHECK(tfx_glDrawBuffers(offset, buffers));
+		CHECK(tfx_glReadBuffer(GL_COLOR_ATTACHMENT0));
 	}
 
 	GLenum status = CHECK(tfx_glCheckFramebufferStatus(GL_FRAMEBUFFER));
@@ -1517,9 +1517,73 @@ tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format, uint16_t fl
 	}
 
 	c.gl_fbo = fbo;
-	c.allocated += 1;
+	c.allocated = count;
 
 	return c;
+}
+
+tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format, uint16_t flags) {
+	tfx_texture attachments[2];
+	int n = 0;
+
+	bool has_color = false;
+	bool has_depth = false;
+
+	tfx_format color_fmt = TFX_FORMAT_RGBA8;
+	tfx_format depth_fmt = TFX_FORMAT_D16;
+
+	switch (format) {
+		// color formats
+		case TFX_FORMAT_RGB565:
+		case TFX_FORMAT_RGBA8:
+		case TFX_FORMAT_RGB10A2:
+		case TFX_FORMAT_RG11B10F:
+		case TFX_FORMAT_RGBA16F: {
+			has_color = true;
+			color_fmt = format;
+			break;
+		}
+		// color + depth
+		case TFX_FORMAT_RGB565_D16: {
+			has_depth = true;
+			has_color = true;
+			color_fmt = TFX_FORMAT_RGB565;
+			depth_fmt = TFX_FORMAT_D16;
+			break;
+		}
+		case TFX_FORMAT_RGBA8_D16: {
+			has_depth = true;
+			has_color = true;
+			color_fmt = TFX_FORMAT_RGBA8;
+			depth_fmt = TFX_FORMAT_D16;
+			break;
+		}
+		case TFX_FORMAT_RGBA8_D24: {
+			has_depth = true;
+			has_color = true;
+			color_fmt = TFX_FORMAT_RGBA8;
+			depth_fmt = TFX_FORMAT_D24;
+			break;
+		}
+		// depth only
+		case TFX_FORMAT_D16:
+		case TFX_FORMAT_D24: {
+			has_depth = true;
+			depth_fmt = format;
+			break;
+		}
+		default: assert(false);
+	}
+
+	if (has_color) {
+		attachments[n++] = tfx_texture_new(w, h, 1, NULL, color_fmt, flags);
+	}
+
+	if (has_depth) {
+		attachments[n++] = tfx_texture_new(w, h, 1, NULL, depth_fmt, flags);
+	}
+
+	return tfx_canvas_attachments_new(true, n, attachments);
 }
 
 static size_t uniform_size_for(tfx_uniform_type type) {
@@ -1721,18 +1785,14 @@ tfx_texture tfx_get_texture(tfx_canvas *canvas, uint8_t index) {
 	memset(&tex, 0, sizeof(tfx_texture));
 
 	assert(index < canvas->allocated);
-	tex.format = canvas->format;
-	tex.gl_count = 1;
-	tex.gl_ids[0] = canvas->gl_ids[index];
-	tex.width = canvas->width;
-	tex.height = canvas->height;
 
-	if (canvas->mipmaps) {
-		tex.flags |= TFX_TEXTURE_GEN_MIPS;
-	}
-	if (canvas->cube) {
-		tex.flags |= TFX_TEXTURE_CUBE;
-	}
+	memcpy(&tex, &canvas->attachments[index], sizeof(tfx_texture));
+	tex.gl_count = 1;
+	tex.gl_ids[0] = tex.gl_ids[tex.gl_idx];
+	tex.gl_idx = 0;
+
+	// no cpu writes for textures from canvases, doesn't make sense.
+	tex.flags &= ~TFX_TEXTURE_CPU_WRITABLE;
 
 	return tex;
 }
@@ -1960,6 +2020,7 @@ tfx_stats tfx_frame() {
 		tfx_texture *tex = &g_textures[i];
 		tfx_texture_params *internal = tex->internal;
 		if (internal->update_data != NULL && (tex->flags & TFX_TEXTURE_CPU_WRITABLE) == TFX_TEXTURE_CPU_WRITABLE) {
+			assert((tex->flags & TFX_TEXTURE_CUBE) != TFX_TEXTURE_CUBE);
 			// spin the buffer id before updating
 			tex->gl_idx = (tex->gl_idx + 1) % tex->gl_count;
 			tfx_glBindTexture(GL_TEXTURE_2D, tex->gl_ids[tex->gl_idx]);
@@ -2053,14 +2114,29 @@ tfx_stats tfx_frame() {
 		CHECK(tfx_glViewport(0, 0, canvas->width, canvas->height));
 
 		if (canvas->cube) {
-			CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + view->canvas_layer, canvas->gl_ids[0], 0));
-			CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,  GL_TEXTURE_CUBE_MAP_POSITIVE_X + view->canvas_layer, canvas->gl_ids[1], 0));
+			// TODO: shadow clone
+			assert(canvas->allocated <= 2);
+			for (unsigned i = 0; i < canvas->allocated; i++) {
+				tfx_texture *attachment = &canvas->attachments[i];
+				if (texture_is_depth(attachment)) {
+					CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,  GL_TEXTURE_CUBE_MAP_POSITIVE_X + view->canvas_layer, attachment->gl_ids[1], 0));
+				}
+				else {
+					CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + view->canvas_layer, attachment->gl_ids[0], 0));
+				}
+			}
 		}
 
-		if (last_canvas && canvas != last_canvas && last_canvas->mipmaps && last_canvas->gl_fbo != canvas->gl_fbo) {
+		if (last_canvas && canvas != last_canvas && last_canvas->gl_fbo != canvas->gl_fbo) {
 			GLenum fmt = last_canvas->cube ? GL_TEXTURE_CUBE_MAP : GL_TEXTURE_2D;
-			tfx_glBindTexture(fmt, last_canvas->gl_ids[0]);
-			tfx_glGenerateMipmap(fmt);
+			for (unsigned i = 0; i < last_canvas->allocated; i++) {
+				tfx_texture *attachment = &last_canvas->attachments[i];
+				if ((attachment->flags & TFX_TEXTURE_GEN_MIPS) != TFX_TEXTURE_GEN_MIPS) {
+					continue;
+				}
+				tfx_glBindTexture(fmt, attachment->gl_ids[attachment->gl_idx]);
+				tfx_glGenerateMipmap(fmt);
+			}
 		}
 		last_canvas = canvas;
 

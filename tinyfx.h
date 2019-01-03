@@ -92,9 +92,9 @@ typedef enum tfx_format {
 	TFX_FORMAT_RGB565 = 0,
 	TFX_FORMAT_RGBA8,
 
-	// TFX_FORMAT_RGB10A2,
+	TFX_FORMAT_RGB10A2,
 	TFX_FORMAT_RG11B10F,
-	// TFX_FORMAT_RGBA16F,
+	TFX_FORMAT_RGBA16F,
 
 	// color + depth
 	TFX_FORMAT_RGB565_D16,
@@ -106,8 +106,9 @@ typedef enum tfx_format {
 	// TFX_FORMAT_RGBA16F_D16,
 
 	// depth only
-	TFX_FORMAT_D16
-	// TFX_FORMAT_D24_S8
+	TFX_FORMAT_D16,
+	TFX_FORMAT_D24,
+	//TFX_FORMAT_D24_S8
 } tfx_format;
 
 typedef unsigned tfx_program;
@@ -155,6 +156,7 @@ typedef struct tfx_texture {
 	unsigned gl_idx, gl_count;
 	uint16_t width;
 	uint16_t height;
+	uint16_t depth;
 	tfx_format format;
 	uint16_t flags, _pad0;
 	void *internal;
@@ -162,13 +164,16 @@ typedef struct tfx_texture {
 
 typedef struct tfx_canvas {
 	unsigned gl_fbo;
-	unsigned gl_ids[8]; // limit: 2x msaa + 2x non-msaa
+	tfx_texture attachments[8];
+	//unsigned gl_ids[8]; // limit: 2x msaa + 2x non-msaa
 	uint32_t allocated;
 	uint16_t width;
 	uint16_t height;
-	tfx_format format;
-	bool mipmaps;
+	//tfx_format format;
+	//bool mipmaps;
 	bool cube;
+	//void *user_data;
+	bool own_attachments;
 } tfx_canvas;
 
 typedef enum tfx_component_type {
@@ -261,12 +266,13 @@ TFX_API tfx_transient_buffer tfx_transient_buffer_new(tfx_vertex_format *fmt, ui
 
 TFX_API tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tfx_buffer_usage usage);
 
-TFX_API tfx_texture tfx_texture_new(uint16_t w, uint16_t h, void *data, tfx_format format, uint16_t flags);
+TFX_API tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data, tfx_format format, uint16_t flags);
 TFX_API void tfx_texture_update(tfx_texture *tex, void *data);
 TFX_API void tfx_texture_free(tfx_texture *tex);
 TFX_API tfx_texture tfx_get_texture(tfx_canvas *canvas, uint8_t index);
 
 TFX_API tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format, uint16_t flags);
+TFX_API tfx_canvas tfx_canvas_attachments_new(bool claim_attachments, int count, tfx_texture *attachments);
 
 TFX_API void tfx_view_set_name(uint8_t id, const char *name);
 TFX_API void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas, int layer);
