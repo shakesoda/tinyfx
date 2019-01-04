@@ -207,13 +207,16 @@ typedef struct tfx_view {
 	tfx_draw    *jobs;
 	tfx_blit_op *blits;
 
-	int   clear_color;
+	unsigned clear_color;
 	float clear_depth;
 
 	tfx_rect scissor_rect;
 	// https://opengl.gpuinfo.org/displaycapability.php?name=GL_MAX_VIEWPORTS
 	tfx_rect viewports[16];
 	int viewport_count;
+
+	// for single pass rendering to eyes, cubes, shadowmaps etc.
+	int instance_mul;
 
 	float view[16];
 	float proj_left[16];
@@ -1717,7 +1720,7 @@ void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas, int layer) {
 	view->canvas_layer = layer;
 }
 
-void tfx_view_set_clear_color(uint8_t id, int color) {
+void tfx_view_set_clear_color(uint8_t id, unsigned color) {
 	tfx_view *view = &g_views[id];
 	assert(view != NULL);
 	view->flags |= TFX_VIEW_CLEAR_COLOR;
@@ -1800,6 +1803,14 @@ void tfx_view_set_viewports(uint8_t id, int count, uint16_t **viewports) {
 		view->viewports[i].w = viewports[i][2];
 		view->viewports[i].h = viewports[i][3];
 	}
+}
+
+void tfx_view_set_instance_mul(uint8_t id, unsigned factor) {
+	if (g_caps.instancing) {
+		TFX_WARN("%s", "Instancing is not supported, instance mul will be ignored!");
+	}
+	tfx_view *view = &g_views[id];
+	view->instance_mul = factor;
 }
 
 void tfx_view_set_scissor(uint8_t id, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
@@ -2256,7 +2267,7 @@ tfx_stats tfx_frame() {
 		GLuint mask = 0;
 		if (view->flags & TFX_VIEW_CLEAR_COLOR) {
 			mask |= GL_COLOR_BUFFER_BIT;
-			int color = view->clear_color;
+			unsigned color = view->clear_color;
 			float c[] = {
 				((color >> 24) & 0xff) / 255.0f,
 				((color >> 16) & 0xff) / 255.0f,
@@ -2498,16 +2509,31 @@ tfx_stats tfx_frame() {
 				}
 			}
 
+			int instance_mul = view->instance_mul;
+			if (instance_mul == 0) {
+				instance_mul = view->viewport_count;
+				// canvas layer -1 indicates using layered rendering, multiply instances to suit layer count.
+				// for a cubemap array on multiple viewports, this really could be a lot!
+				if (view->canvas_layer < 0) {
+					if (canvas->cube) {
+						instance_mul *= 6;
+					}
+					if (canvas->attachments[0].depth > 1) {
+						instance_mul *= canvas->attachments[0].depth;
+					}
+				}
+			}
+
 			if (draw.use_ibo) {
 				if (draw.ibo.dirty && tfx_glMemoryBarrier) {
 					CHECK(tfx_glMemoryBarrier(GL_ELEMENT_ARRAY_BARRIER_BIT));
 					draw.ibo.dirty = false;
 				}
 				CHECK(tfx_glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, draw.ibo.gl_id));
-				CHECK(tfx_glDrawElementsInstanced(mode, draw.indices, GL_UNSIGNED_SHORT, (GLvoid*)draw.offset, 1));
+				CHECK(tfx_glDrawElementsInstanced(mode, draw.indices, GL_UNSIGNED_SHORT, (GLvoid*)draw.offset, 1*instance_mul));
 			}
 			else {
-				CHECK(tfx_glDrawArraysInstanced(mode, 0, (GLsizei)draw.indices, 1));
+				CHECK(tfx_glDrawArraysInstanced(mode, 0, (GLsizei)draw.indices, 1*instance_mul));
 			}
 
 			sb_free(draw.uniforms);

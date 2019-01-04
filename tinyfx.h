@@ -264,12 +264,13 @@ TFX_API tfx_canvas tfx_canvas_attachments_new(bool claim_attachments, int count,
 
 TFX_API void tfx_view_set_name(uint8_t id, const char *name);
 TFX_API void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas, int layer);
-TFX_API void tfx_view_set_clear_color(uint8_t id, int color);
+TFX_API void tfx_view_set_clear_color(uint8_t id, unsigned color);
 TFX_API void tfx_view_set_clear_depth(uint8_t id, float depth);
 TFX_API void tfx_view_set_depth_test(uint8_t id, tfx_depth_test mode);
 TFX_API void tfx_view_set_scissor(uint8_t id, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
 // order: xywh, in pixels
 TFX_API void tfx_view_set_viewports(uint8_t id, int count, uint16_t **viewports);
+TFX_API void tfx_view_set_instance_mul(uint8_t id, unsigned factor);
 TFX_API uint16_t tfx_view_get_width(uint8_t id);
 TFX_API uint16_t tfx_view_get_height(uint8_t id);
 TFX_API void tfx_view_get_dimensions(uint8_t id, uint16_t *w, uint16_t *h);
