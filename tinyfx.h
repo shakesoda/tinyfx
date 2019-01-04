@@ -172,8 +172,8 @@ typedef struct tfx_canvas {
 	//tfx_format format;
 	//bool mipmaps;
 	bool cube;
-	//void *user_data;
 	bool own_attachments;
+	bool reconfigure;
 } tfx_canvas;
 
 typedef enum tfx_component_type {
@@ -271,6 +271,7 @@ TFX_API void tfx_view_set_scissor(uint8_t id, uint16_t x, uint16_t y, uint16_t w
 // order: xywh, in pixels
 TFX_API void tfx_view_set_viewports(uint8_t id, int count, uint16_t **viewports);
 TFX_API void tfx_view_set_instance_mul(uint8_t id, unsigned factor);
+TFX_API tfx_canvas *tfx_view_get_canvas(uint8_t id);
 TFX_API uint16_t tfx_view_get_width(uint8_t id);
 TFX_API uint16_t tfx_view_get_height(uint8_t id);
 TFX_API void tfx_view_get_dimensions(uint8_t id, uint16_t *w, uint16_t *h);

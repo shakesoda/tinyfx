@@ -1485,36 +1485,16 @@ void tfx_texture_free(tfx_texture *tex) {
 	}
 }
 
-tfx_canvas tfx_canvas_attachments_new(bool claim_attachments, int count, tfx_texture *attachments) {
-	tfx_canvas c;
-	memset(&c, 0, sizeof(tfx_canvas));
-
-	c.allocated = 0;
-	c.width = attachments[0].width;
-	c.height = attachments[0].height;
-	c.own_attachments = claim_attachments;
-
-	// and now the fbo.
-	GLuint fbo;
-	CHECK(tfx_glGenFramebuffers(1, &fbo));
-	CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, fbo));
-
-	uint16_t layers = attachments[0].depth;
-
-	c.cube = (attachments[0].flags & TFX_TEXTURE_CUBE) == TFX_TEXTURE_CUBE;
+bool canvas_reconfigure(tfx_canvas *c) {
+	uint16_t layers = c->attachments[0].depth;
 
 	bool found_color = false;
 	bool found_depth = false;
 
 	int offset = 0;
-	for (int i = 0; i < count; i++) {
-		assert(attachments[i].gl_count == 1); // TODO: bad for msaa
-		assert(attachments[i].depth == layers);
-		assert((attachments[i].flags & TFX_TEXTURE_CPU_WRITABLE) != TFX_TEXTURE_CPU_WRITABLE);
-
-		c.attachments[i] = attachments[i];
+	for (unsigned i = 0; i < c->allocated; i++) {
 		GLenum attach = GL_COLOR_ATTACHMENT0 + offset;
-		if (texture_is_depth(&attachments[i])) {
+		if (texture_is_depth(&c->attachments[i])) {
 			assert(!found_depth); // two depth buffers, bail
 			attach = GL_DEPTH_ATTACHMENT;
 			found_depth = true;
@@ -1524,12 +1504,12 @@ tfx_canvas tfx_canvas_attachments_new(bool claim_attachments, int count, tfx_tex
 			offset += 1;
 		}
 
-		if (c.cube || c.attachments[i].depth > 1) {
-			CHECK(tfx_glFramebufferTexture(GL_FRAMEBUFFER, attach, c.attachments[i].gl_ids[0], 0));
+		if (c->cube || c->attachments[i].depth > 1) {
+			CHECK(tfx_glFramebufferTexture(GL_FRAMEBUFFER, attach, c->attachments[i].gl_ids[0], 0));
 			continue;
 		}
 
-		CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, attach, GL_TEXTURE_2D, c.attachments[i].gl_ids[0], 0));
+		CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, attach, GL_TEXTURE_2D, c->attachments[i].gl_ids[0], 0));
 		/*
 		// TODO: use RBO if depth texture isn't needed
 		if (depth_format) {
@@ -1563,15 +1543,44 @@ tfx_canvas tfx_canvas_attachments_new(bool claim_attachments, int count, tfx_tex
 		CHECK(tfx_glReadBuffer(GL_COLOR_ATTACHMENT0));
 	}
 
+	// TODO: return something more error-y
 	GLenum status = CHECK(tfx_glCheckFramebufferStatus(GL_FRAMEBUFFER));
 	if (status != GL_FRAMEBUFFER_COMPLETE) {
 		assert(false);
-		// TODO: return something more error-y
+		return false;
+	}
+
+	return true;
+}
+
+tfx_canvas tfx_canvas_attachments_new(bool claim_attachments, int count, tfx_texture *attachments) {
+	tfx_canvas c;
+	memset(&c, 0, sizeof(tfx_canvas));
+
+	c.allocated = count;
+	c.width = attachments[0].width;
+	c.height = attachments[0].height;
+	c.own_attachments = claim_attachments;
+	c.cube = (attachments[0].flags & TFX_TEXTURE_CUBE) == TFX_TEXTURE_CUBE;
+
+	// and now the fbo.
+	GLuint fbo;
+	CHECK(tfx_glGenFramebuffers(1, &fbo));
+	CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, fbo));
+
+	for (int i = 0; i < count; i++) {
+		assert(attachments[i].gl_count == 1); // TODO: bad for msaa
+		assert(attachments[i].depth == attachments[0].depth);
+		assert((attachments[i].flags & TFX_TEXTURE_CPU_WRITABLE) != TFX_TEXTURE_CPU_WRITABLE);
+		c.attachments[i] = attachments[i];
+	}
+
+	if (!canvas_reconfigure(&c)) {
+		c.allocated = 0;
 		return c;
 	}
 
 	c.gl_fbo = fbo;
-	c.allocated = count;
 
 	return c;
 }
@@ -1755,6 +1764,18 @@ void tfx_view_set_depth_test(uint8_t id, tfx_depth_test mode) {
 		}
 		default: assert(false); break;
 	}
+}
+
+static tfx_canvas *get_canvas(tfx_view *view) {
+	assert(view != NULL);
+	if (view->has_canvas) {
+		return &view->canvas;
+	}
+	return &g_backbuffer;
+}
+
+tfx_canvas *tfx_view_get_canvas(uint8_t id) {
+	return get_canvas(&g_views[id]);
 }
 
 uint16_t tfx_view_get_width(uint8_t id) {
@@ -2006,14 +2027,6 @@ void tfx_touch(uint8_t id) {
 	sb_push(view->draws, g_tmp_draw);
 }
 
-static tfx_canvas *get_canvas(tfx_view *view) {
-	assert(view != NULL);
-	if (view->has_canvas) {
-		return &view->canvas;
-	}
-	return &g_backbuffer;
-}
-
 void tfx_blit(uint8_t dst, uint8_t src, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
 	tfx_rect rect;
 	rect.x = x;
@@ -2189,6 +2202,11 @@ tfx_stats tfx_frame() {
 			continue;
 		}
 		CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, canvas->gl_fbo));
+
+		if (canvas->reconfigure) {
+			canvas_reconfigure(canvas);
+			canvas->reconfigure = false;
+		}
 
 		if (view->viewport_count == 0) {
 			tfx_rect *vp = &view->viewports[0];
