@@ -150,6 +150,18 @@ enum {
 	TFX_VIEW_SCISSOR       = 1 << 5
 };
 
+typedef struct tfx_rect {
+	uint16_t x;
+	uint16_t y;
+	uint16_t w;
+	uint16_t h;
+} tfx_rect;
+
+typedef struct tfx_blit_op {
+	tfx_canvas *source;
+	tfx_rect rect;
+} tfx_blit_op;
+
 typedef struct tfx_draw {
 	tfx_draw_callback callback;
 	uint64_t flags;
@@ -199,6 +211,9 @@ typedef struct tfx_view {
 	float clear_depth;
 
 	tfx_rect scissor_rect;
+	// https://opengl.gpuinfo.org/displaycapability.php?name=GL_MAX_VIEWPORTS
+	tfx_rect viewports[16];
+	int viewport_count;
 
 	float view[16];
 	float proj_left[16];
@@ -294,6 +309,7 @@ PFNGLMEMORYBARRIERPROC tfx_glMemoryBarrier;
 PFNGLBINDBUFFERBASEPROC tfx_glBindBufferBase;
 PFNGLDISPATCHCOMPUTEPROC tfx_glDispatchCompute;
 PFNGLVIEWPORTPROC tfx_glViewport;
+PFNGLVIEWPORTINDEXEDFPROC tfx_glViewportIndexedf;
 PFNGLSCISSORPROC tfx_glScissor;
 PFNGLCLEARCOLORPROC tfx_glClearColor;
 PFNGLCLEARDEPTHFPROC tfx_glClearDepthf;
@@ -385,6 +401,7 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glBindBufferBase = get_proc_address("glBindBufferBase");
 	tfx_glDispatchCompute = get_proc_address("glDispatchCompute");
 	tfx_glViewport = get_proc_address("glViewport");
+	tfx_glViewportIndexedf = get_proc_address("glViewportIndexedf");
 	tfx_glScissor = get_proc_address("glScissor");
 	tfx_glClearColor = get_proc_address("glClearColor");
 	tfx_glClearDepthf = get_proc_address("glClearDepthf");
@@ -1768,6 +1785,23 @@ void tfx_view_get_dimensions(uint8_t id, uint16_t *w, uint16_t *h) {
 	}
 }
 
+void tfx_view_set_viewports(uint8_t id, int count, uint16_t **viewports) {
+	// as of 2019-01-04, every GPU with GL_ARB_viewport_array supports 16.
+	assert(count <= 16);
+	if (count > 1) {
+		assert(tfx_glViewportIndexedf);
+	}
+
+	tfx_view *view = &g_views[id];
+	view->viewport_count = count;
+	for (int i = 0; i < count; i++) {
+		view->viewports[i].x = viewports[i][0];
+		view->viewports[i].y = viewports[i][1];
+		view->viewports[i].w = viewports[i][2];
+		view->viewports[i].h = viewports[i][3];
+	}
+}
+
 void tfx_view_set_scissor(uint8_t id, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
 	tfx_view *view = &g_views[id];
 	view->flags |= TFX_VIEW_SCISSOR;
@@ -2144,7 +2178,27 @@ tfx_stats tfx_frame() {
 			continue;
 		}
 		CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, canvas->gl_fbo));
-		CHECK(tfx_glViewport(0, 0, canvas->width, canvas->height));
+
+		if (view->viewport_count == 0) {
+			tfx_rect *vp = &view->viewports[0];
+			vp->x = 0;
+			vp->y = 0;
+			vp->w = canvas->width;
+			vp->h = canvas->height;
+			view->viewport_count = 1;
+		}
+
+		// TODO: render whole view multiple times if this is unavailable?
+		if (tfx_glViewportIndexedf) {
+			for (int v = 0; v < view->viewport_count; v++) {
+				tfx_rect *vp = &view->viewports[v];
+				CHECK(tfx_glViewportIndexedf(v, (float)vp->x, (float)vp->y, (float)vp->w, (float)vp->h));
+			}
+		}
+		else {
+			tfx_rect *vp = &view->viewports[0];
+			CHECK(tfx_glViewport(vp->x, vp->y, vp->w, vp->h));
+		}
 
 		// TODO: caps flags for texture array support
 		if (view->canvas_layer < 0 && canvas->attachments[0].depth > 1) {

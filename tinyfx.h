@@ -216,18 +216,6 @@ typedef struct tfx_transient_buffer {
 
 typedef void (*tfx_draw_callback)(void);
 
-typedef struct tfx_rect {
-	uint16_t x;
-	uint16_t y;
-	uint16_t w;
-	uint16_t h;
-} tfx_rect;
-
-typedef struct tfx_blit_op {
-	tfx_canvas *source;
-	tfx_rect rect;
-} tfx_blit_op;
-
 typedef struct tfx_stats {
 	uint32_t draws;
 	uint32_t blits;
@@ -280,6 +268,8 @@ TFX_API void tfx_view_set_clear_color(uint8_t id, int color);
 TFX_API void tfx_view_set_clear_depth(uint8_t id, float depth);
 TFX_API void tfx_view_set_depth_test(uint8_t id, tfx_depth_test mode);
 TFX_API void tfx_view_set_scissor(uint8_t id, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
+// order: xywh, in pixels
+TFX_API void tfx_view_set_viewports(uint8_t id, int count, uint16_t **viewports);
 TFX_API uint16_t tfx_view_get_width(uint8_t id);
 TFX_API uint16_t tfx_view_get_height(uint8_t id);
 TFX_API void tfx_view_get_dimensions(uint8_t id, uint16_t *w, uint16_t *h);
