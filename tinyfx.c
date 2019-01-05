@@ -1592,10 +1592,7 @@ tfx_canvas tfx_canvas_attachments_new(bool claim_attachments, int count, tfx_tex
 	CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, c.gl_fbo[0]));
 
 	if (!canvas_reconfigure(&c)) {
-		c.allocated = 0;
-		CHECK(tfx_glDeleteFramebuffers(c.msaa ? 2 : 1, c.gl_fbo));
-		c.gl_fbo[0] = 0;
-		c.gl_fbo[1] = 0;
+		tfx_canvas_free(&c);
 		return c;
 	}
 
@@ -1616,6 +1613,23 @@ tfx_canvas tfx_canvas_attachments_new(bool claim_attachments, int count, tfx_tex
 	}
 
 	return c;
+}
+
+void tfx_canvas_free(tfx_canvas *c) {
+	if (!c->allocated) {
+		return;
+	}
+	CHECK(tfx_glDeleteFramebuffers(c->msaa ? 2 : 1, c->gl_fbo));
+	if (!c->own_attachments) {
+		return;
+	}
+	for (unsigned i = 0; i < c->allocated; i++) {
+		tfx_texture *attach = &c->attachments[i];
+		tfx_texture_free(attach);
+	}
+	c->allocated = 0;
+	c->gl_fbo[0] = 0;
+	c->gl_fbo[1] = 0;
 }
 
 tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format, uint16_t flags) {

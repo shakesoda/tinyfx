@@ -263,6 +263,7 @@ TFX_API void tfx_texture_free(tfx_texture *tex);
 TFX_API tfx_texture tfx_get_texture(tfx_canvas *canvas, uint8_t index);
 
 TFX_API tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format, uint16_t flags);
+TFX_API void tfx_canvas_free(tfx_canvas *c);
 TFX_API tfx_canvas tfx_canvas_attachments_new(bool claim_attachments, int count, tfx_texture *attachments);
 
 TFX_API void tfx_view_set_name(uint8_t id, const char *name);
