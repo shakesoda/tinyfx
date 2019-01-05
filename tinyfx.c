@@ -1108,7 +1108,7 @@ static GLuint load_shader(GLenum type, const char *shaderSrc) {
 	}
 
 	char *ss = shader_concat(shaderSrc, type);
-	CHECK(tfx_glShaderSource(shader, 1, &ss, NULL));
+	CHECK(tfx_glShaderSource(shader, 1, (const char**)&ss, NULL));
 	CHECK(tfx_glCompileShader(shader));
 
 	GLint compiled;
@@ -1347,7 +1347,6 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 		assert(t.gl_count = 1);
 		samples = 4;
 	}
-	bool gen_msaa = samples > 1;
 
 	t.gl_idx = 0;
 
@@ -1509,8 +1508,6 @@ void tfx_texture_free(tfx_texture *tex) {
 }
 
 bool canvas_reconfigure(tfx_canvas *c) {
-	uint16_t layers = c->attachments[0].depth;
-
 	bool found_color = false;
 	bool found_depth = false;
 
