@@ -1353,6 +1353,7 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 	tfx_texture_params *params = calloc(1, sizeof(tfx_texture_params));
 	params->update_data = NULL;
 
+	bool depth = false;
 	switch (format) {
 		// integer formats
 		case TFX_FORMAT_RGB565:
@@ -1386,11 +1387,13 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 			params->format = GL_DEPTH_COMPONENT;
 			params->internal_format = GL_DEPTH_COMPONENT16;
 			params->type = GL_UNSIGNED_BYTE;
+			depth = true;
 			break;
 		case TFX_FORMAT_D24:
 			params->format = GL_DEPTH_COMPONENT;
 			params->internal_format = GL_DEPTH_COMPONENT24;
 			params->type = GL_UNSIGNED_BYTE;
+			depth = true;
 			break;
 		// invalid
 		case TFX_FORMAT_RGB565_D16:
@@ -1456,6 +1459,9 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 			CHECK(tfx_glTexParameterf(mode, GL_TEXTURE_MAX_ANISOTROPY_EXT, g_max_aniso));
 		}
 
+		if (depth) {
+			CHECK(tfx_glTexParameteri(mode, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE));
+		}
 		CHECK(tfx_glPixelStorei(GL_UNPACK_ALIGNMENT, 1));
 
 		if (layers > 1) {
