@@ -77,7 +77,9 @@ enum {
 	TFX_TEXTURE_CPU_WRITABLE = 1 << 3,
 	// TFX_TEXTURE_GPU_WRITABLE = 1 << 4,
 	TFX_TEXTURE_GEN_MIPS = 1 << 5,
-	TFX_TEXTURE_CUBE = 1 << 6
+	TFX_TEXTURE_CUBE = 1 << 6,
+	TFX_TEXTURE_MSAA_X2 = 1 << 7,
+	TFX_TEXTURE_MSAA_X4 = 1 << 8
 };
 
 typedef enum tfx_reset_flags {
@@ -153,6 +155,7 @@ typedef struct tfx_uniform {
 
 typedef struct tfx_texture {
 	unsigned gl_ids[2];
+	unsigned gl_msaa_id;
 	unsigned gl_idx, gl_count;
 	uint16_t width;
 	uint16_t height;
@@ -163,14 +166,14 @@ typedef struct tfx_texture {
 } tfx_texture;
 
 typedef struct tfx_canvas {
-	unsigned gl_fbo;
+	// 0 = normal, 1 = msaa
+	unsigned gl_fbo[2];
 	tfx_texture attachments[8];
-	//unsigned gl_ids[8]; // limit: 2x msaa + 2x non-msaa
 	uint32_t allocated;
 	uint16_t width;
 	uint16_t height;
-	//tfx_format format;
 	//bool mipmaps;
+	bool msaa;
 	bool cube;
 	bool own_attachments;
 	bool reconfigure;
