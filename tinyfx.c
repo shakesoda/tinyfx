@@ -2252,14 +2252,11 @@ tfx_stats tfx_frame() {
 				}
 				CHECK(tfx_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, last_canvas->gl_fbo[0]));
 				CHECK(tfx_glBindFramebuffer(GL_READ_FRAMEBUFFER, last_canvas->gl_fbo[1]));
-				//CHECK(tfx_glViewport(0, 0, last_canvas->width, last_canvas->height));
 				CHECK(tfx_glBlitFramebuffer(
 					0, 0, last_canvas->width, last_canvas->height, // src
 					0, 0, last_canvas->width, last_canvas->height, // dst
 					mask, GL_NEAREST
 				));
-				CHECK(tfx_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0));
-				CHECK(tfx_glBindFramebuffer(GL_READ_FRAMEBUFFER, 0));
 			}
 		}
 		int nb = sb_count(view->blits);
@@ -2274,7 +2271,6 @@ tfx_stats tfx_frame() {
 				tfx_canvas *src = blit->source;
 				CHECK(tfx_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, canvas->gl_fbo[0]));
 				CHECK(tfx_glBindFramebuffer(GL_READ_FRAMEBUFFER, src->gl_fbo[0]));
-				//CHECK(tfx_glViewport(0, 0, canvas->width, canvas->height));
 				CHECK(tfx_glBlitFramebuffer(
 					blit->rect.x, blit->rect.y, blit->rect.w, blit->rect.h, // src
 					blit->rect.x, blit->rect.y, blit->rect.w, blit->rect.h, // dst
@@ -2398,14 +2394,6 @@ tfx_stats tfx_frame() {
 		if (mask != 0) {
 			CHECK(tfx_glClear(mask));
 		}
-
-		// fallback blit path for ES2 (no glBlitFramebuffer available)
-		/*
-		for (int i = 0; i < nb; i++) {
-			tfx_blit_op blit = view->blits[i];
-			// TODO
-		}
-		*/
 
 		if (view->flags & TFX_VIEW_DEPTH_TEST_MASK) {
 			CHECK(tfx_glEnable(GL_DEPTH_TEST));
