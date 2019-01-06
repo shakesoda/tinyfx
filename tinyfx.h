@@ -174,6 +174,9 @@ typedef struct tfx_canvas {
 	uint32_t allocated;
 	uint16_t width;
 	uint16_t height;
+	uint16_t current_width;
+	uint16_t current_height;
+	int current_mip;
 	//bool mipmaps;
 	bool msaa;
 	bool cube;
@@ -308,7 +311,7 @@ TFX_API void tfx_dispatch(uint8_t id, tfx_program program, uint32_t x, uint32_t 
 TFX_API void tfx_submit(uint8_t id, tfx_program program, bool retain);
 TFX_API void tfx_touch(uint8_t id);
 
-TFX_API void tfx_blit(uint8_t src, uint8_t dst, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
+TFX_API void tfx_blit(uint8_t src, uint8_t dst, uint16_t x, uint16_t y, uint16_t w, uint16_t h, int mip);
 
 TFX_API tfx_stats tfx_frame();
 

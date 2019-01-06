@@ -160,6 +160,7 @@ typedef struct tfx_rect {
 
 typedef struct tfx_blit_op {
 	tfx_canvas *source;
+	int source_mip;
 	tfx_rect rect;
 	GLenum mask;
 } tfx_blit_op;
@@ -859,6 +860,8 @@ void tfx_reset(uint16_t width, uint16_t height, tfx_reset_flags flags) {
 	g_backbuffer.allocated = 1;
 	g_backbuffer.width = width;
 	g_backbuffer.height = height;
+	g_backbuffer.current_width = width;
+	g_backbuffer.current_height = height;
 	g_backbuffer.attachments[0].width = width;
 	g_backbuffer.attachments[0].height = height;
 	g_backbuffer.attachments[0].depth = 1;
@@ -1598,6 +1601,8 @@ tfx_canvas tfx_canvas_attachments_new(bool claim_attachments, int count, tfx_tex
 	c.allocated = count;
 	c.width = attachments[0].width;
 	c.height = attachments[0].height;
+	c.current_width = c.width;
+	c.current_height = c.height;
 	c.own_attachments = claim_attachments;
 	c.cube = (attachments[0].flags & TFX_TEXTURE_CUBE) == TFX_TEXTURE_CUBE;
 	bool msaa = (attachments[0].flags & TFX_TEXTURE_MSAA_X2) == TFX_TEXTURE_MSAA_X2;
@@ -2102,7 +2107,7 @@ void tfx_touch(uint8_t id) {
 	sb_push(view->draws, g_tmp_draw);
 }
 
-void tfx_blit(uint8_t dst, uint8_t src, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+void tfx_blit(uint8_t dst, uint8_t src, uint16_t x, uint16_t y, uint16_t w, uint16_t h, int mip) {
 	tfx_rect rect;
 	rect.x = x;
 	rect.y = y;
@@ -2111,6 +2116,7 @@ void tfx_blit(uint8_t dst, uint8_t src, uint16_t x, uint16_t y, uint16_t w, uint
 
 	tfx_blit_op blit;
 	blit.source = get_canvas(&g_views[src]);
+	blit.source_mip = mip;
 	blit.rect = rect;
 	blit.mask = 0;
 
@@ -2278,6 +2284,27 @@ tfx_stats tfx_frame() {
 		tfx_canvas *canvas = get_canvas(view);
 
 		if (last_canvas && canvas != last_canvas && last_canvas->gl_fbo[0] != canvas->gl_fbo[0]) {
+			// reset mipmap level range when done rendering, so sampling works.
+			if (last_canvas->current_mip != 0) {
+				int offset = 0;
+				for (unsigned i = 0; i < last_canvas->allocated; i++) {
+					tfx_texture *attachment = &last_canvas->attachments[i];
+					CHECK(tfx_glBindTexture(GL_TEXTURE_2D, attachment->gl_ids[0]));
+					CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0));
+					CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, attachment->mip_count-1));
+
+					GLenum attach = GL_DEPTH_ATTACHMENT;
+					if (!texture_is_depth(attachment)) {
+						attach = GL_COLOR_ATTACHMENT0 + offset;
+						offset += 1;
+					}
+					CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, attach, GL_TEXTURE_2D, attachment->gl_ids[0], 0));
+				}
+				last_canvas->current_width = last_canvas->width;
+				last_canvas->current_height = last_canvas->height;
+				last_canvas->current_mip = 0;
+			}
+
 			if (last_canvas->msaa) {
 				GLenum mask = 0;
 				for (unsigned i = 0; i < last_canvas->allocated; i++) {
@@ -2310,6 +2337,11 @@ tfx_stats tfx_frame() {
 				tfx_canvas *src = blit->source;
 				CHECK(tfx_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, canvas->msaa ? canvas->gl_fbo[1] : canvas->gl_fbo[0]));
 				CHECK(tfx_glBindFramebuffer(GL_READ_FRAMEBUFFER, src->msaa ? src->gl_fbo[1] : src->gl_fbo[0]));
+				if (blit->source_mip != src->current_mip) {
+					// TODO: calculate correct dest size, update mip bindings
+					assert(false);
+					// CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, attach, GL_TEXTURE_2D, attachment->gl_ids[0], canvas->current_mip));
+				}
 				CHECK(tfx_glBlitFramebuffer(
 					blit->rect.x, blit->rect.y, blit->rect.w, blit->rect.h, // src
 					blit->rect.x, blit->rect.y, blit->rect.w, blit->rect.h, // dst
@@ -2336,12 +2368,41 @@ tfx_stats tfx_frame() {
 
 		CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, canvas->msaa ? canvas->gl_fbo[1] : canvas->gl_fbo[0]));
 
+		if (view->canvas_layer >= 0 && canvas->current_mip != view->canvas_layer && !canvas->cube) {
+			int offset = 0;
+			for (unsigned i = 0; i < canvas->allocated; i++) {
+				tfx_texture *attachment = &canvas->attachments[i];
+				canvas->current_width = canvas->width;
+				canvas->current_height = canvas->height;
+				canvas->current_mip = view->canvas_layer;
+				for (int j = 0; j < canvas->current_mip; j++) {
+					canvas->current_width /= 2;
+					canvas->current_height /= 2;
+					canvas->current_width = canvas->current_width > 1 ? canvas->current_width : 1;
+					canvas->current_height = canvas->current_height > 1 ? canvas->current_height : 1;
+				}
+				GLenum attach = GL_DEPTH_ATTACHMENT;
+				if (!texture_is_depth(attachment)) {
+					attach = GL_COLOR_ATTACHMENT0 + offset;
+					offset += 1;
+				}
+
+				assert(canvas->current_mip > 0);
+				CHECK(tfx_glBindTexture(GL_TEXTURE_2D, attachment->gl_ids[0]));
+
+				// bind next level for rendering but first restrict fetches only to previous level
+				CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, canvas->current_mip-1));
+				CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, canvas->current_mip-1));
+				CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, attach, GL_TEXTURE_2D, attachment->gl_ids[0], canvas->current_mip));
+			}
+		}
+
 		if (view->viewport_count == 0) {
 			tfx_rect *vp = &view->viewports[0];
 			vp->x = 0;
 			vp->y = 0;
-			vp->w = canvas->width;
-			vp->h = canvas->height;
+			vp->w = canvas->current_width;
+			vp->h = canvas->current_height;
 			view->viewport_count = 1;
 		}
 
@@ -2363,7 +2424,7 @@ tfx_stats tfx_frame() {
 			for (unsigned i = 0; i < canvas->allocated; i++) {
 				tfx_texture *attachment = &canvas->attachments[i];
 				if (texture_is_depth(attachment)) {
-					CHECK(tfx_glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, attachment->gl_ids[1], 0));
+					CHECK(tfx_glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, attachment->gl_ids[0], 0));
 				}
 				else {
 					CHECK(tfx_glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, attachment->gl_ids[0], 0));
@@ -2376,7 +2437,7 @@ tfx_stats tfx_frame() {
 			for (unsigned i = 0; i < canvas->allocated; i++) {
 				tfx_texture *attachment = &canvas->attachments[i];
 				if (texture_is_depth(attachment)) {
-					CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,  GL_TEXTURE_CUBE_MAP_POSITIVE_X + view->canvas_layer, attachment->gl_ids[1], 0));
+					CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,  GL_TEXTURE_CUBE_MAP_POSITIVE_X + view->canvas_layer, attachment->gl_ids[0], 0));
 				}
 				else {
 					CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + view->canvas_layer, attachment->gl_ids[0], 0));
