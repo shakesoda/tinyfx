@@ -22,6 +22,7 @@ extern "C" {
 // TODO: look into just keeping the stuff from GL header in here, this thing
 // isn't included on many systems and is kind of annoying to always need.
 #include <GL/glcorearb.h>
+#include <math.h>
 #include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
@@ -1415,6 +1416,7 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 	CHECK(tfx_glGenTextures(t.gl_count, t.gl_ids));
 	bool aniso = (g_flags & TFX_RESET_MAX_ANISOTROPY) == TFX_RESET_MAX_ANISOTROPY;
 	bool gen_mips = (flags & TFX_TEXTURE_GEN_MIPS) == TFX_TEXTURE_GEN_MIPS;
+	bool reserve_mips = (flags & TFX_TEXTURE_RESERVE_MIPS) == TFX_TEXTURE_RESERVE_MIPS;
 	bool cube     = (flags & TFX_TEXTURE_CUBE) == TFX_TEXTURE_CUBE;
 	GLenum mode = 0;
 	if (layers > 1) {
@@ -1433,6 +1435,10 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 		else {
 			mode = GL_TEXTURE_2D;
 		}
+	}
+
+	if (gen_mips || reserve_mips) {
+		t.mip_count = 1 + (int)floorf(log2f(fmaxf(t.width, t.height)));
 	}
 
 	for (unsigned i = 0; i < t.gl_count; i++) {
@@ -1480,6 +1486,22 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 		}
 		else {
 			CHECK(tfx_glTexImage2D(mode, 0, params->internal_format, w, h, 0, params->format, params->type, data));
+			if (reserve_mips) {
+				uint16_t current_width = t.width;
+				uint16_t current_height = t.height;
+
+				for (unsigned i = 1; i < t.mip_count; i++) {
+					// calculate next viewport size
+					current_width /= 2;
+					current_height /= 2;
+
+					// ensure that the viewport size is always at least 1x1
+					current_width = current_width > 0 ? current_width : 1;
+					current_height = current_height > 0 ? current_height : 1;
+
+					CHECK(tfx_glTexImage2D(mode, i, params->internal_format, current_width, current_height, 0, params->format, params->type, NULL));
+				}
+			}
 		}
 		if (gen_mips) {
 			CHECK(tfx_glGenerateMipmap(mode));
@@ -2286,8 +2308,8 @@ tfx_stats tfx_frame() {
 			for (int b = 0; b < nb; b++) {
 				tfx_blit_op *blit = &view->blits[b];
 				tfx_canvas *src = blit->source;
-				CHECK(tfx_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, canvas->gl_fbo[0]));
-				CHECK(tfx_glBindFramebuffer(GL_READ_FRAMEBUFFER, src->gl_fbo[0]));
+				CHECK(tfx_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, canvas->msaa ? canvas->gl_fbo[1] : canvas->gl_fbo[0]));
+				CHECK(tfx_glBindFramebuffer(GL_READ_FRAMEBUFFER, src->msaa ? src->gl_fbo[1] : src->gl_fbo[0]));
 				CHECK(tfx_glBlitFramebuffer(
 					blit->rect.x, blit->rect.y, blit->rect.w, blit->rect.h, // src
 					blit->rect.x, blit->rect.y, blit->rect.w, blit->rect.h, // dst
@@ -2448,7 +2470,7 @@ tfx_stats tfx_frame() {
 			last_flags = draw.flags;
 
 			if (CHANGED(flags_diff, TFX_STATE_DEPTH_WRITE)) {
-				CHECK(tfx_glDepthMask((draw.flags & TFX_STATE_DEPTH_WRITE) > 0));
+				CHECK(tfx_glDepthMask((draw.flags & TFX_STATE_DEPTH_WRITE) == TFX_STATE_DEPTH_WRITE));
 			}
 
 			if (CHANGED(flags_diff, TFX_STATE_MSAA) && g_caps.multisample) {
@@ -2487,8 +2509,8 @@ tfx_stats tfx_frame() {
 			}
 
 			if (CHANGED(flags_diff, TFX_STATE_RGB_WRITE) || CHANGED(flags_diff, TFX_STATE_ALPHA_WRITE)) {
-				bool write_rgb = draw.flags & TFX_STATE_RGB_WRITE;
-				bool write_alpha = draw.flags & TFX_STATE_ALPHA_WRITE;
+				bool write_rgb = (draw.flags & TFX_STATE_RGB_WRITE) == TFX_STATE_RGB_WRITE;
+				bool write_alpha = (draw.flags & TFX_STATE_ALPHA_WRITE) == TFX_STATE_ALPHA_WRITE;
 				CHECK(tfx_glColorMask(write_rgb, write_rgb, write_rgb, write_alpha));
 			}
 

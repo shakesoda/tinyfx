@@ -77,9 +77,10 @@ enum {
 	TFX_TEXTURE_CPU_WRITABLE = 1 << 3,
 	// TFX_TEXTURE_GPU_WRITABLE = 1 << 4,
 	TFX_TEXTURE_GEN_MIPS = 1 << 5,
-	TFX_TEXTURE_CUBE = 1 << 6,
-	TFX_TEXTURE_MSAA_X2 = 1 << 7,
-	TFX_TEXTURE_MSAA_X4 = 1 << 8
+	TFX_TEXTURE_RESERVE_MIPS = 1 << 6,
+	TFX_TEXTURE_CUBE = 1 << 7,
+	TFX_TEXTURE_MSAA_X2 = 1 << 8,
+	TFX_TEXTURE_MSAA_X4 = 1 << 9
 };
 
 typedef enum tfx_reset_flags {
@@ -160,6 +161,7 @@ typedef struct tfx_texture {
 	uint16_t width;
 	uint16_t height;
 	uint16_t depth;
+	uint16_t mip_count;
 	tfx_format format;
 	uint16_t flags, _pad0;
 	void *internal;
