@@ -1902,7 +1902,7 @@ void tfx_view_set_viewports(uint8_t id, int count, uint16_t **viewports) {
 }
 
 void tfx_view_set_instance_mul(uint8_t id, unsigned factor) {
-	if (g_caps.instancing) {
+	if (!g_caps.instancing) {
 		TFX_WARN("%s", "Instancing is not supported, instance mul will be ignored!");
 	}
 	tfx_view *view = &g_views[id];
