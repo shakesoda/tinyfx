@@ -90,6 +90,13 @@ typedef enum tfx_reset_flags {
 	// TFX_RESET_VR
 } tfx_reset_flags;
 
+typedef enum tfx_view_flags {
+	TFX_VIEW_NONE = 0,
+	TFX_VIEW_INVALIDATE = 1 << 0,
+	TFX_VIEW_SORT_SEQUENTIAL = 1 << 1,
+	TFX_VIEW_DEFAULT = TFX_VIEW_SORT_SEQUENTIAL
+} tfx_view_flags;
+
 typedef enum tfx_format {
 	// color only
 	TFX_FORMAT_RGB565 = 0,
@@ -163,6 +170,7 @@ typedef struct tfx_texture {
 	uint16_t depth;
 	uint16_t mip_count;
 	tfx_format format;
+	bool is_depth;
 	uint16_t flags, _pad0;
 	void *internal;
 } tfx_texture;
@@ -273,6 +281,7 @@ TFX_API tfx_canvas tfx_canvas_attachments_new(bool claim_attachments, int count,
 
 TFX_API void tfx_view_set_name(uint8_t id, const char *name);
 TFX_API void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas, int layer);
+TFX_API void tfx_view_set_flags(uint8_t id, tfx_view_flags flags);
 TFX_API void tfx_view_set_clear_color(uint8_t id, unsigned color);
 TFX_API void tfx_view_set_clear_depth(uint8_t id, float depth);
 TFX_API void tfx_view_set_depth_test(uint8_t id, tfx_depth_test mode);

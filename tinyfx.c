@@ -124,9 +124,13 @@ static char *tfx_strdup(const char *src) {
 }
 
 #ifdef TFX_DEBUG
-#define CHECK(fn) fn; { GLenum _status; while ((_status = tfx_glGetError())) { if (_status == GL_NO_ERROR) break; TFX_ERROR("%s:%d GL ERROR: %d", __FILE__, __LINE__, _status); } }
+#	ifdef TFX_FATAL_ERRORS
+#		define CHECK(fn) fn; { GLenum _status; while ((_status = tfx_glGetError())) { if (_status == GL_NO_ERROR) break; TFX_ERROR("%s:%d GL ERROR: %d", __FILE__, __LINE__, _status); assert(false); } }
+#	else
+#		define CHECK(fn) fn; { GLenum _status; while ((_status = tfx_glGetError())) { if (_status == GL_NO_ERROR) break; TFX_ERROR("%s:%d GL ERROR: %d", __FILE__, __LINE__, _status); } }
+#	endif
 #else
-#define CHECK(fn) fn;
+#	define CHECK(fn) fn;
 #endif
 
 #define TFX_INFO(msg, ...) tfx_printf(TFX_SEVERITY_INFO, msg, __VA_ARGS__)
@@ -139,16 +143,19 @@ static char *tfx_strdup(const char *src) {
 // view flags
 enum {
 	// clear modes
-	TFX_VIEW_CLEAR_COLOR   = 1 << 0,
-	TFX_VIEW_CLEAR_DEPTH   = 1 << 1,
+	TFXI_VIEW_CLEAR_COLOR     = 1 << 0,
+	TFXI_VIEW_CLEAR_DEPTH     = 1 << 1,
 
 	// depth modes
-	TFX_VIEW_DEPTH_TEST_LT = 1 << 2,
-	TFX_VIEW_DEPTH_TEST_GT = 1 << 3,
-	TFX_VIEW_DEPTH_TEST_EQ = 1 << 4,
+	TFXI_VIEW_DEPTH_TEST_LT   = 1 << 2,
+	TFXI_VIEW_DEPTH_TEST_GT   = 1 << 3,
+	TFXI_VIEW_DEPTH_TEST_EQ   = 1 << 4,
 
 	// scissor test
-	TFX_VIEW_SCISSOR       = 1 << 5
+	TFXI_VIEW_SCISSOR         = 1 << 5,
+
+	TFXI_VIEW_INVALIDATE      = 1 << 6,
+	TFXI_VIEW_SORT_SEQUENTIAL = 1 << 7
 };
 
 typedef struct tfx_rect {
@@ -226,12 +233,12 @@ typedef struct tfx_view {
 	float proj_right[16];
 } tfx_view;
 
-#define TFX_VIEW_CLEAR_MASK      (TFX_VIEW_CLEAR_COLOR | TFX_VIEW_CLEAR_DEPTH)
-#define TFX_VIEW_DEPTH_TEST_MASK (TFX_VIEW_DEPTH_TEST_LT | TFX_VIEW_DEPTH_TEST_GT | TFX_VIEW_DEPTH_TEST_EQ)
+#define TFXI_VIEW_CLEAR_MASK      (TFXI_VIEW_CLEAR_COLOR | TFXI_VIEW_CLEAR_DEPTH)
+#define TFXI_VIEW_DEPTH_TEST_MASK (TFXI_VIEW_DEPTH_TEST_LT | TFXI_VIEW_DEPTH_TEST_GT | TFXI_VIEW_DEPTH_TEST_EQ)
 
-#define TFX_STATE_CULL_MASK      (TFX_STATE_CULL_CW | TFX_STATE_CULL_CCW)
-#define TFX_STATE_BLEND_MASK     (TFX_STATE_BLEND_ALPHA)
-#define TFX_STATE_DRAW_MASK      (TFX_STATE_DRAW_POINTS \
+#define TFXI_STATE_CULL_MASK      (TFX_STATE_CULL_CW | TFX_STATE_CULL_CCW)
+#define TFXI_STATE_BLEND_MASK     (TFX_STATE_BLEND_ALPHA)
+#define TFXI_STATE_DRAW_MASK      (TFX_STATE_DRAW_POINTS \
 	| TFX_STATE_DRAW_LINES | TFX_STATE_DRAW_LINE_STRIP | TFX_STATE_DRAW_LINE_LOOP \
 	| TFX_STATE_DRAW_TRI_STRIP | TFX_STATE_DRAW_TRI_FAN \
 )
@@ -297,6 +304,7 @@ PFNGLDELETEFRAMEBUFFERSPROC tfx_glDeleteFramebuffers;
 PFNGLBINDFRAMEBUFFERPROC tfx_glBindFramebuffer;
 PFNGLBLITFRAMEBUFFERPROC tfx_glBlitFramebuffer;
 PFNGLFRAMEBUFFERTEXTURE2DPROC tfx_glFramebufferTexture2D;
+PFNGLINVALIDATEFRAMEBUFFERPROC tfx_glInvalidateFramebuffer;
 PFNGLGENRENDERBUFFERSPROC tfx_glGenRenderbuffers;
 PFNGLBINDRENDERBUFFERPROC tfx_glBindRenderbuffer;
 PFNGLRENDERBUFFERSTORAGEPROC tfx_glRenderbufferStorage;
@@ -392,6 +400,7 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glBindFramebuffer = get_proc_address("glBindFramebuffer");
 	tfx_glBlitFramebuffer = get_proc_address("glBlitFramebuffer");
 	tfx_glFramebufferTexture2D = get_proc_address("glFramebufferTexture2D");
+	tfx_glInvalidateFramebuffer = get_proc_address("glInvalidateFramebuffer");
 	tfx_glGenRenderbuffers = get_proc_address("glGenRenderbuffers");
 	tfx_glBindRenderbuffer = get_proc_address("glBindRenderbuffer");
 	tfx_glRenderbufferStorage = get_proc_address("glRenderbufferStorage");
@@ -1315,16 +1324,6 @@ typedef struct tfx_texture_params {
 	void *update_data;
 } tfx_texture_params;
 
-bool texture_is_depth(tfx_texture *tex) {
-	switch (tex->format) {
-		case TFX_FORMAT_D16: return true;
-		case TFX_FORMAT_D24: return true;
-		//case TFX_FORMAT_D32: return true;
-		default: break;
-	}
-	return false;
-}
-
 tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data, tfx_format format, uint16_t flags) {
 	tfx_texture t;
 	memset(&t, 0, sizeof(tfx_texture));
@@ -1407,7 +1406,7 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 			assert(false);
 			break;
 	}
-
+	t.is_depth = depth;
 	t.internal = params;
 
 	if (samples > 1) {
@@ -1468,7 +1467,8 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 			CHECK(tfx_glTexParameterf(mode, GL_TEXTURE_MAX_ANISOTROPY_EXT, g_max_aniso));
 		}
 
-		if (depth) {
+		// if mips are reserved, this isn't a shadow map but instead something like hi-z buffer. can't ref compare.
+		if (depth && !reserve_mips) {
 			CHECK(tfx_glTexParameteri(mode, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE));
 		}
 		CHECK(tfx_glPixelStorei(GL_UNPACK_ALIGNMENT, 1));
@@ -1545,7 +1545,7 @@ bool canvas_reconfigure(tfx_canvas *c) {
 	int offset = 0;
 	for (unsigned i = 0; i < c->allocated; i++) {
 		GLenum attach = GL_COLOR_ATTACHMENT0 + offset;
-		if (texture_is_depth(&c->attachments[i])) {
+		if (c->attachments[i].is_depth) {
 			assert(!found_depth); // two depth buffers, bail
 			attach = GL_DEPTH_ATTACHMENT;
 			found_depth = true;
@@ -1635,7 +1635,7 @@ tfx_canvas tfx_canvas_attachments_new(bool claim_attachments, int count, tfx_tex
 		// sanity checking was already done by canvas_reconfigure, no need here.
 		for (unsigned i = 0; i < c.allocated; i++) {
 			GLenum attach = GL_COLOR_ATTACHMENT0 + offset;
-			if (texture_is_depth(&c.attachments[i])) {
+			if (c.attachments[i].is_depth) {
 				attach = GL_DEPTH_ATTACHMENT;
 			}
 			else {
@@ -1787,6 +1787,20 @@ void tfx_set_uniform_int(tfx_uniform *uniform, const int *data, const int count)
 	sb_push(g_uniforms, *uniform);
 }
 
+void tfx_view_set_flags(uint8_t id, tfx_view_flags flags) {
+	tfx_view *view = &g_views[id];
+#define FLAG(flags, mask) ((flags & mask) == mask)
+	if (FLAG(flags, TFX_VIEW_INVALIDATE)) {
+		view->flags |= TFXI_VIEW_INVALIDATE;
+	}
+	// NYI
+	if (FLAG(flags, TFX_VIEW_SORT_SEQUENTIAL)) {
+		assert(false);
+		view->flags |= TFXI_VIEW_SORT_SEQUENTIAL;
+	}
+#undef FLAG
+}
+
 void tfx_view_set_transform(uint8_t id, float *_view, float *proj_l, float *proj_r) {
 	// TODO: reserve tfx_world_to_view, tfx_view_to_screen uniforms
 	tfx_view *view = &g_views[id];
@@ -1812,14 +1826,14 @@ void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas, int layer) {
 void tfx_view_set_clear_color(uint8_t id, unsigned color) {
 	tfx_view *view = &g_views[id];
 	assert(view != NULL);
-	view->flags |= TFX_VIEW_CLEAR_COLOR;
+	view->flags |= TFXI_VIEW_CLEAR_COLOR;
 	view->clear_color = color;
 }
 
 void tfx_view_set_clear_depth(uint8_t id, float depth) {
 	tfx_view *view = &g_views[id];
 	assert(view != NULL);
-	view->flags |= TFX_VIEW_CLEAR_DEPTH;
+	view->flags |= TFXI_VIEW_CLEAR_DEPTH;
 	view->clear_depth = depth;
 }
 
@@ -1827,19 +1841,19 @@ void tfx_view_set_depth_test(uint8_t id, tfx_depth_test mode) {
 	tfx_view *view = &g_views[id];
 	assert(view != NULL);
 
-	view->flags &= ~TFX_VIEW_DEPTH_TEST_MASK;
+	view->flags &= ~TFXI_VIEW_DEPTH_TEST_MASK;
 	switch (mode) {
 		case TFX_DEPTH_TEST_NONE: break; /* already cleared */
 		case TFX_DEPTH_TEST_LT: {
-			view->flags |= TFX_VIEW_DEPTH_TEST_LT;
+			view->flags |= TFXI_VIEW_DEPTH_TEST_LT;
 			break;
 		}
 		case TFX_DEPTH_TEST_GT: {
-			view->flags |= TFX_VIEW_DEPTH_TEST_GT;
+			view->flags |= TFXI_VIEW_DEPTH_TEST_GT;
 			break;
 		}
 		case TFX_DEPTH_TEST_EQ: {
-			view->flags |= TFX_VIEW_DEPTH_TEST_EQ;
+			view->flags |= TFXI_VIEW_DEPTH_TEST_EQ;
 			break;
 		}
 		default: assert(false); break;
@@ -1916,7 +1930,7 @@ void tfx_view_set_instance_mul(uint8_t id, unsigned factor) {
 
 void tfx_view_set_scissor(uint8_t id, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
 	tfx_view *view = &g_views[id];
-	view->flags |= TFX_VIEW_SCISSOR;
+	view->flags |= TFXI_VIEW_SCISSOR;
 
 	tfx_rect rect;
 	rect.x = x;
@@ -2122,7 +2136,7 @@ void tfx_blit(uint8_t dst, uint8_t src, uint16_t x, uint16_t y, uint16_t w, uint
 
 	for (unsigned i = 0; i < blit.source->allocated; i++) {
 		tfx_texture *attach = &blit.source->attachments[i];
-		if (texture_is_depth(attach)) {
+		if (attach->is_depth) {
 			blit.mask |= GL_DEPTH_BUFFER_BIT;
 		}
 		else {
@@ -2294,7 +2308,7 @@ tfx_stats tfx_frame() {
 					CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, attachment->mip_count-1));
 
 					GLenum attach = GL_DEPTH_ATTACHMENT;
-					if (!texture_is_depth(attachment)) {
+					if (!attachment->is_depth) {
 						attach = GL_COLOR_ATTACHMENT0 + offset;
 						offset += 1;
 					}
@@ -2309,7 +2323,7 @@ tfx_stats tfx_frame() {
 				GLenum mask = 0;
 				for (unsigned i = 0; i < last_canvas->allocated; i++) {
 					tfx_texture *attach = &last_canvas->attachments[i];
-					if (texture_is_depth(attach)) {
+					if (attach->is_depth) {
 						mask |= GL_DEPTH_BUFFER_BIT;
 					}
 					else {
@@ -2335,6 +2349,7 @@ tfx_stats tfx_frame() {
 			for (int b = 0; b < nb; b++) {
 				tfx_blit_op *blit = &view->blits[b];
 				tfx_canvas *src = blit->source;
+
 				CHECK(tfx_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, canvas->msaa ? canvas->gl_fbo[1] : canvas->gl_fbo[0]));
 				CHECK(tfx_glBindFramebuffer(GL_READ_FRAMEBUFFER, src->msaa ? src->gl_fbo[1] : src->gl_fbo[0]));
 				if (blit->source_mip != src->current_mip) {
@@ -2382,7 +2397,7 @@ tfx_stats tfx_frame() {
 					canvas->current_height = canvas->current_height > 1 ? canvas->current_height : 1;
 				}
 				GLenum attach = GL_DEPTH_ATTACHMENT;
-				if (!texture_is_depth(attachment)) {
+				if (!attachment->is_depth) {
 					attach = GL_COLOR_ATTACHMENT0 + offset;
 					offset += 1;
 				}
@@ -2419,11 +2434,11 @@ tfx_stats tfx_frame() {
 		}
 
 		// TODO: caps flags for texture array support
-		if (view->canvas_layer < 0 && canvas->attachments[0].depth > 1) {
+		if (view->canvas_layer < 0) {
 			assert(canvas->allocated <= 2);
 			for (unsigned i = 0; i < canvas->allocated; i++) {
 				tfx_texture *attachment = &canvas->attachments[i];
-				if (texture_is_depth(attachment)) {
+				if (attachment->is_depth) {
 					CHECK(tfx_glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, attachment->gl_ids[0], 0));
 				}
 				else {
@@ -2432,11 +2447,10 @@ tfx_stats tfx_frame() {
 			}
 		}
 		else if (canvas->cube) {
-			// TODO: shadow clone
 			assert(canvas->allocated <= 2);
 			for (unsigned i = 0; i < canvas->allocated; i++) {
 				tfx_texture *attachment = &canvas->attachments[i];
-				if (texture_is_depth(attachment)) {
+				if (attachment->is_depth) {
 					CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,  GL_TEXTURE_CUBE_MAP_POSITIVE_X + view->canvas_layer, attachment->gl_ids[0], 0));
 				}
 				else {
@@ -2462,7 +2476,7 @@ tfx_stats tfx_frame() {
 		}
 		last_canvas = canvas;
 
-		if (view->flags & TFX_VIEW_SCISSOR) {
+		if (view->flags & TFXI_VIEW_SCISSOR) {
 			tfx_rect rect = view->scissor_rect;
 			CHECK(tfx_glEnable(GL_SCISSOR_TEST));
 			CHECK(tfx_glScissor(rect.x, canvas->height - rect.y - rect.h, rect.w, rect.h));
@@ -2472,7 +2486,24 @@ tfx_stats tfx_frame() {
 		}
 
 		GLuint mask = 0;
-		if (view->flags & TFX_VIEW_CLEAR_COLOR) {
+		if ((view->flags & TFXI_VIEW_INVALIDATE) == TFXI_VIEW_INVALIDATE && tfx_glInvalidateFramebuffer) {
+			int offset = 0;
+			GLenum attachments[8];
+			bool clear_depth = false;
+			for (unsigned i = 0; i < canvas->allocated; i++) {
+				tfx_texture *attachment = &canvas->attachments[i];
+				if (attachment->is_depth) {
+					attachments[i] = GL_DEPTH_ATTACHMENT;
+				}
+				else {
+					attachments[i] = GL_COLOR_ATTACHMENT0 + offset;
+					offset += 1;
+				}
+			}
+			CHECK(tfx_glInvalidateFramebuffer(GL_FRAMEBUFFER, canvas->allocated, attachments));
+		}
+
+		if (view->flags & TFXI_VIEW_CLEAR_COLOR) {
 			mask |= GL_COLOR_BUFFER_BIT;
 			unsigned color = view->clear_color;
 			float c[] = {
@@ -2485,7 +2516,7 @@ tfx_stats tfx_frame() {
 			CHECK(tfx_glColorMask(true, true, true, true));
 		}
 
-		if (view->flags & TFX_VIEW_CLEAR_DEPTH) {
+		if (view->flags & TFXI_VIEW_CLEAR_DEPTH) {
 			mask |= GL_DEPTH_BUFFER_BIT;
 			CHECK(tfx_glClearDepthf(view->clear_depth));
 			CHECK(tfx_glDepthMask(true));
@@ -2495,15 +2526,15 @@ tfx_stats tfx_frame() {
 			CHECK(tfx_glClear(mask));
 		}
 
-		if (view->flags & TFX_VIEW_DEPTH_TEST_MASK) {
+		if (view->flags & TFXI_VIEW_DEPTH_TEST_MASK) {
 			CHECK(tfx_glEnable(GL_DEPTH_TEST));
-			if (view->flags & TFX_VIEW_DEPTH_TEST_LT) {
+			if (view->flags & TFXI_VIEW_DEPTH_TEST_LT) {
 				CHECK(tfx_glDepthFunc(GL_LEQUAL));
 			}
-			else if (view->flags & TFX_VIEW_DEPTH_TEST_GT) {
+			else if (view->flags & TFXI_VIEW_DEPTH_TEST_GT) {
 				CHECK(tfx_glDepthFunc(GL_GEQUAL));
 			}
-			else if (view->flags & TFX_VIEW_DEPTH_TEST_EQ) {
+			else if (view->flags & TFXI_VIEW_DEPTH_TEST_EQ) {
 				CHECK(tfx_glDepthFunc(GL_EQUAL));
 			}
 		}
@@ -2543,7 +2574,7 @@ tfx_stats tfx_frame() {
 				}
 			}
 
-			if (CHANGED(flags_diff, TFX_STATE_CULL_MASK)) {
+			if (CHANGED(flags_diff, TFXI_STATE_CULL_MASK)) {
 				if (draw.flags & TFX_STATE_CULL_CW) {
 					CHECK(tfx_glEnable(GL_CULL_FACE));
 					CHECK(tfx_glFrontFace(GL_CW));
@@ -2557,8 +2588,8 @@ tfx_stats tfx_frame() {
 				}
 			}
 
-			if (CHANGED(flags_diff, TFX_STATE_BLEND_MASK)) {
-				if (draw.flags & TFX_STATE_BLEND_MASK) {
+			if (CHANGED(flags_diff, TFXI_STATE_BLEND_MASK)) {
+				if (draw.flags & TFXI_STATE_BLEND_MASK) {
 					CHECK(tfx_glEnable(GL_BLEND));
 					if (draw.flags & TFX_STATE_BLEND_ALPHA) {
 						CHECK(tfx_glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA));
@@ -2575,7 +2606,7 @@ tfx_stats tfx_frame() {
 				CHECK(tfx_glColorMask(write_rgb, write_rgb, write_rgb, write_alpha));
 			}
 
-			if ((view->flags & TFX_VIEW_SCISSOR) || draw.use_scissor) {
+			if ((view->flags & TFXI_VIEW_SCISSOR) || draw.use_scissor) {
 				CHECK(tfx_glEnable(GL_SCISSOR_TEST));
 				tfx_rect rect = view->scissor_rect;
 				if (draw.use_scissor) {
@@ -2624,7 +2655,7 @@ tfx_stats tfx_frame() {
 			}
 
 			GLenum mode = GL_TRIANGLES;
-			switch (draw.flags & TFX_STATE_DRAW_MASK) {
+			switch (draw.flags & TFXI_STATE_DRAW_MASK) {
 				case TFX_STATE_DRAW_POINTS:     mode = GL_POINTS; break;
 				case TFX_STATE_DRAW_LINES:      mode = GL_LINES; break;
 				case TFX_STATE_DRAW_LINE_STRIP: mode = GL_LINE_STRIP; break;
