@@ -293,6 +293,7 @@ PFNGLDELETEPROGRAMPROC tfx_glDeleteProgram;
 PFNGLGENTEXTURESPROC tfx_glGenTextures;
 PFNGLBINDTEXTUREPROC tfx_glBindTexture;
 PFNGLTEXPARAMETERIPROC tfx_glTexParameteri;
+PFNGLTEXPARAMETERIVPROC tfx_glTexParameteriv;
 PFNGLTEXPARAMETERFPROC tfx_glTexParameterf;
 PFNGLPIXELSTOREIPROC tfx_glPixelStorei;
 PFNGLTEXIMAGE2DPROC tfx_glTexImage2D;
@@ -389,6 +390,7 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glGenTextures = get_proc_address("glGenTextures");
 	tfx_glBindTexture = get_proc_address("glBindTexture");
 	tfx_glTexParameteri = get_proc_address("glTexParameteri");
+	tfx_glTexParameteriv = get_proc_address("glTexParameteriv");
 	tfx_glTexParameterf = get_proc_address("glTexParameterf");
 	tfx_glPixelStorei = get_proc_address("glPixelStorei");
 	tfx_glTexImage2D = get_proc_address("glTexImage2D");
@@ -1470,6 +1472,10 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 		// if mips are reserved, this isn't a shadow map but instead something like hi-z buffer. can't ref compare.
 		if (depth && !reserve_mips) {
 			CHECK(tfx_glTexParameteri(mode, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE));
+
+			// note: GL 3.3
+			GLint swizzleMask[] = { GL_RED, GL_RED, GL_RED, GL_ONE };
+			CHECK(tfx_glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzleMask));
 		}
 		CHECK(tfx_glPixelStorei(GL_UNPACK_ALIGNMENT, 1));
 
@@ -2297,47 +2303,48 @@ tfx_stats tfx_frame() {
 
 		tfx_canvas *canvas = get_canvas(view);
 
-		if (last_canvas && canvas != last_canvas && last_canvas->gl_fbo[0] != canvas->gl_fbo[0]) {
-			// reset mipmap level range when done rendering, so sampling works.
-			if (last_canvas->current_mip != 0) {
-				int offset = 0;
-				for (unsigned i = 0; i < last_canvas->allocated; i++) {
-					tfx_texture *attachment = &last_canvas->attachments[i];
-					CHECK(tfx_glBindTexture(GL_TEXTURE_2D, attachment->gl_ids[0]));
-					CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0));
-					CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, attachment->mip_count-1));
+		bool canvas_changed = last_canvas && canvas != last_canvas && last_canvas->gl_fbo[0] != canvas->gl_fbo[0];
+		int last_mip = (last_canvas && last_canvas->current_mip) ? last_canvas->current_mip : 0;
+		bool reset_mip = canvas_changed && last_mip != 0;
+		bool mip_changed = reset_mip || last_mip != view->canvas_layer;
+		// reset mipmap level range when done rendering, so sampling works.
+		if (reset_mip) {
+			int offset = 0;
+			for (unsigned i = 0; i < last_canvas->allocated; i++) {
+				tfx_texture *attachment = &last_canvas->attachments[i];
+				CHECK(tfx_glBindTexture(GL_TEXTURE_2D, attachment->gl_ids[0]));
+				CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0));
+				CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, attachment->mip_count-1));
 
-					GLenum attach = GL_DEPTH_ATTACHMENT;
-					if (!attachment->is_depth) {
-						attach = GL_COLOR_ATTACHMENT0 + offset;
-						offset += 1;
-					}
-					CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, attach, GL_TEXTURE_2D, attachment->gl_ids[0], 0));
+				GLenum attach = GL_DEPTH_ATTACHMENT;
+				if (!attachment->is_depth) {
+					attach = GL_COLOR_ATTACHMENT0 + offset;
+					offset += 1;
 				}
-				last_canvas->current_width = last_canvas->width;
-				last_canvas->current_height = last_canvas->height;
-				last_canvas->current_mip = 0;
+				CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, attach, GL_TEXTURE_2D, attachment->gl_ids[0], 0));
 			}
-
-			if (last_canvas->msaa) {
-				GLenum mask = 0;
-				for (unsigned i = 0; i < last_canvas->allocated; i++) {
-					tfx_texture *attach = &last_canvas->attachments[i];
-					if (attach->is_depth) {
-						mask |= GL_DEPTH_BUFFER_BIT;
-					}
-					else {
-						mask |= GL_COLOR_BUFFER_BIT;
-					}
+			last_canvas->current_width = last_canvas->width;
+			last_canvas->current_height = last_canvas->height;
+			last_canvas->current_mip = 0;
+		}
+		if (last_canvas && last_canvas->msaa && ((canvas_changed && last_mip == 0) || (mip_changed && last_mip == 0))) {
+			GLenum mask = 0;
+			for (unsigned i = 0; i < last_canvas->allocated; i++) {
+				tfx_texture *attach = &last_canvas->attachments[i];
+				if (attach->is_depth) {
+					mask |= GL_DEPTH_BUFFER_BIT;
 				}
-				CHECK(tfx_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, last_canvas->gl_fbo[0]));
-				CHECK(tfx_glBindFramebuffer(GL_READ_FRAMEBUFFER, last_canvas->gl_fbo[1]));
-				CHECK(tfx_glBlitFramebuffer(
-					0, 0, last_canvas->width, last_canvas->height, // src
-					0, 0, last_canvas->width, last_canvas->height, // dst
-					mask, GL_NEAREST
-				));
+				else {
+					mask |= GL_COLOR_BUFFER_BIT;
+				}
 			}
+			CHECK(tfx_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, last_canvas->gl_fbo[0]));
+			CHECK(tfx_glBindFramebuffer(GL_READ_FRAMEBUFFER, last_canvas->gl_fbo[1]));
+			CHECK(tfx_glBlitFramebuffer(
+				0, 0, last_canvas->width, last_canvas->height, // src
+				0, 0, last_canvas->width, last_canvas->height, // dst
+				mask, GL_NEAREST
+			));
 		}
 		int nb = sb_count(view->blits);
 		stats.blits += nb;
@@ -2381,7 +2388,9 @@ tfx_stats tfx_frame() {
 			canvas->reconfigure = false;
 		}
 
-		CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, canvas->msaa ? canvas->gl_fbo[1] : canvas->gl_fbo[0]));
+		// TODO: can't render to individual cube face mips with msaa this way
+		bool bind_msaa = canvas->msaa && view->canvas_layer <= 0;
+		CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, bind_msaa ? canvas->gl_fbo[1] : canvas->gl_fbo[0]));
 
 		if (view->canvas_layer >= 0 && canvas->current_mip != view->canvas_layer && !canvas->cube) {
 			int offset = 0;
@@ -2403,12 +2412,12 @@ tfx_stats tfx_frame() {
 				}
 
 				assert(canvas->current_mip > 0);
-				CHECK(tfx_glBindTexture(GL_TEXTURE_2D, attachment->gl_ids[0]));
+				CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, attach, GL_TEXTURE_2D, attachment->gl_ids[0], canvas->current_mip));
 
 				// bind next level for rendering but first restrict fetches only to previous level
+				CHECK(tfx_glBindTexture(GL_TEXTURE_2D, attachment->gl_ids[0]));
 				CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, canvas->current_mip-1));
 				CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, canvas->current_mip-1));
-				CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, attach, GL_TEXTURE_2D, attachment->gl_ids[0], canvas->current_mip));
 			}
 		}
 
