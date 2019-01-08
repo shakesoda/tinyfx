@@ -180,6 +180,8 @@ typedef struct tfx_draw {
 	tfx_uniform *uniforms;
 
 	tfx_texture textures[8];
+	uint8_t textures_mip[8];
+	bool textures_write[8];
 	tfx_buffer ssbos[8];
 	bool ssbo_write[8];
 	tfx_buffer vbo;
@@ -304,6 +306,7 @@ PFNGLGENFRAMEBUFFERSPROC tfx_glGenFramebuffers;
 PFNGLDELETEFRAMEBUFFERSPROC tfx_glDeleteFramebuffers;
 PFNGLBINDFRAMEBUFFERPROC tfx_glBindFramebuffer;
 PFNGLBLITFRAMEBUFFERPROC tfx_glBlitFramebuffer;
+PFNGLCOPYIMAGESUBDATAPROC tfx_glCopyImageSubData;
 PFNGLFRAMEBUFFERTEXTURE2DPROC tfx_glFramebufferTexture2D;
 PFNGLINVALIDATEFRAMEBUFFERPROC tfx_glInvalidateFramebuffer;
 PFNGLGENRENDERBUFFERSPROC tfx_glGenRenderbuffers;
@@ -401,6 +404,7 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glDeleteFramebuffers = get_proc_address("glDeleteFramebuffers");
 	tfx_glBindFramebuffer = get_proc_address("glBindFramebuffer");
 	tfx_glBlitFramebuffer = get_proc_address("glBlitFramebuffer");
+	tfx_glCopyImageSubData = get_proc_address("glCopyImageSubData");
 	tfx_glFramebufferTexture2D = get_proc_address("glFramebufferTexture2D");
 	tfx_glInvalidateFramebuffer = get_proc_address("glInvalidateFramebuffer");
 	tfx_glGenRenderbuffers = get_proc_address("glGenRenderbuffers");
@@ -1050,6 +1054,11 @@ const char *vs_append = ""
 	"}\n"
 ;
 
+const char *cs_prepend = ""
+	"#define COMPUTE 1\n"
+	"#line 1\n"
+;
+
 static char *sappend(const char *left, const char *right) {
 	size_t ls = strlen(left);
 	size_t rs = strlen(right);
@@ -1067,6 +1076,11 @@ static char *shader_concat(const char *base, GLenum shader_type) {
 	const char *append = "";
 
 	switch (shader_type) {
+		case GL_COMPUTE_SHADER: {
+			assert(g_caps.compute);
+			prepend = cs_prepend;
+			break;
+		}
 		case GL_VERTEX_SHADER: {
 			prepend = legacy ? legacy_vs_prepend : vs_prepend;
 			append = vs_append;
@@ -1376,6 +1390,11 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 			params->internal_format = GL_RGB10_A2;
 			params->type = GL_UNSIGNED_INT_10_10_10_2;
 			break;
+		case TFX_FORMAT_R32UI:
+			params->format = GL_RED;
+			params->internal_format = GL_R32UI;
+			params->type = GL_UNSIGNED_INT;
+			break;
 		// float formats
 		case TFX_FORMAT_RG11B10F:
 			params->format = GL_RGB;
@@ -1385,6 +1404,11 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 		case TFX_FORMAT_RGBA16F:
 			params->format = GL_RGBA;
 			params->internal_format = GL_RGBA16F;
+			params->type = GL_FLOAT;
+			break;
+		case TFX_FORMAT_R32F:
+			params->format = GL_RED;
+			params->internal_format = GL_R32F;
 			params->type = GL_FLOAT;
 			break;
 		// depth formats
@@ -1398,6 +1422,18 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 			params->format = GL_DEPTH_COMPONENT;
 			params->internal_format = GL_DEPTH_COMPONENT24;
 			params->type = GL_UNSIGNED_BYTE;
+			depth = true;
+			break;
+		case TFX_FORMAT_D32:
+			params->format = GL_DEPTH_COMPONENT;
+			params->internal_format = GL_DEPTH_COMPONENT32;
+			params->type = GL_UNSIGNED_INT;
+			depth = true;
+			break;
+		case TFX_FORMAT_D32F:
+			params->format = GL_DEPTH_COMPONENT;
+			params->internal_format = GL_DEPTH_COMPONENT32F;
+			params->type = GL_FLOAT;
 			depth = true;
 			break;
 		// invalid
@@ -1441,7 +1477,8 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 		}
 	}
 
-	if (gen_mips || reserve_mips) {
+	bool mip_filter = reserve_mips || gen_mips;
+	if (mip_filter) {
 		t.mip_count = 1 + (int)floorf(log2f(fmaxf(t.width, t.height)));
 	}
 
@@ -1450,11 +1487,11 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 
 		CHECK(tfx_glBindTexture(mode, t.gl_ids[i]));
 		if ((flags & TFX_TEXTURE_FILTER_POINT) == TFX_TEXTURE_FILTER_POINT) {
-			CHECK(tfx_glTexParameteri(mode, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST));
+			CHECK(tfx_glTexParameteri(mode, GL_TEXTURE_MIN_FILTER, mip_filter ? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST));
 			CHECK(tfx_glTexParameteri(mode, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
 		}
 		else { // default filter: linear
-			CHECK(tfx_glTexParameteri(mode, GL_TEXTURE_MIN_FILTER, gen_mips ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR));
+			CHECK(tfx_glTexParameteri(mode, GL_TEXTURE_MIN_FILTER, mip_filter ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR));
 			CHECK(tfx_glTexParameteri(mode, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
 		}
 
@@ -1682,6 +1719,8 @@ tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format, uint16_t fl
 	tfx_format depth_fmt = TFX_FORMAT_D16;
 
 	switch (format) {
+		// just data
+		case TFX_FORMAT_R32F:
 		// color formats
 		case TFX_FORMAT_RGB565:
 		case TFX_FORMAT_RGBA8:
@@ -1717,6 +1756,11 @@ tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format, uint16_t fl
 		// depth only
 		case TFX_FORMAT_D16:
 		case TFX_FORMAT_D24: {
+			has_depth = true;
+			depth_fmt = format;
+			break;
+		}
+		case TFX_FORMAT_D32: {
 			has_depth = true;
 			depth_fmt = format;
 			break;
@@ -2002,10 +2046,18 @@ void tfx_set_state(uint64_t flags) {
 }
 
 void tfx_set_buffer(tfx_buffer *buf, uint8_t slot, bool write) {
-	assert(slot <= 8);
+	assert(slot < 8);
 	assert(buf != NULL);
 	g_tmp_draw.ssbos[slot] = *buf;
 	g_tmp_draw.ssbo_write[slot] = write;
+}
+
+void tfx_set_image(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot, uint8_t mip, bool write) {
+	assert(slot < 8);
+	assert(tex != NULL);
+	tfx_set_texture(uniform, tex, slot);
+	g_tmp_draw.textures_mip[slot] = mip;
+	g_tmp_draw.textures_write[slot] = write;
 }
 
 // TODO: make this work for index buffers
@@ -2084,7 +2136,7 @@ void tfx_dispatch(uint8_t id, tfx_program program, uint32_t x, uint32_t y, uint3
 	g_tmp_draw.program = program;
 	assert(program != 0);
 	assert(view != NULL);
-	assert((x + y + z) > 0);
+	assert((x*y*z) > 0);
 
 	tfx_draw add_state;
 	memcpy(&add_state, &g_tmp_draw, sizeof(tfx_draw));
@@ -2140,8 +2192,14 @@ void tfx_blit(uint8_t dst, uint8_t src, uint16_t x, uint16_t y, uint16_t w, uint
 	blit.rect = rect;
 	blit.mask = 0;
 
-	for (unsigned i = 0; i < blit.source->allocated; i++) {
-		tfx_texture *attach = &blit.source->attachments[i];
+	tfx_view *view = &g_views[dst];
+	tfx_canvas *canvas = get_canvas(view);
+
+	// blit to self doesn't make sense, and msaa resolve is automatic.
+	assert(blit.source != canvas);
+
+	for (unsigned i = 0; i < canvas->allocated; i++) {
+		tfx_texture *attach = &canvas->attachments[i];
 		if (attach->is_depth) {
 			blit.mask |= GL_DEPTH_BUFFER_BIT;
 		}
@@ -2150,12 +2208,6 @@ void tfx_blit(uint8_t dst, uint8_t src, uint16_t x, uint16_t y, uint16_t w, uint
 		}
 	}
 
-	// this would cause a GL error and doesn't make sense.
-	if (!blit.source->msaa) {
-		assert(blit.source != get_canvas(&g_views[dst]));
-	}
-
-	tfx_view *view = &g_views[dst];
 	sb_push(view->blits, blit);
 }
 
@@ -2172,6 +2224,36 @@ static void release_compiler() {
 	}
 
 	g_shaderc_allocated = false;
+}
+
+void update_uniforms(tfx_draw *draw) {
+	int nu = sb_count(draw->uniforms);
+	for (int j = 0; j < nu; j++) {
+		tfx_uniform uniform = draw->uniforms[j];
+
+		tfx_shadermap *val = tfx_proglookup(g_uniform_map, draw->program);
+		tfx_locmap **locmap = val->value;
+		tfx_locmap *locval = tfx_loclookup(locmap, uniform.name);
+#ifdef TFX_DEBUG
+		assert(locval);
+#endif
+
+		GLint loc = locval->value;
+		if (loc < 0) {
+			continue;
+		}
+		switch (uniform.type) {
+			case TFX_UNIFORM_INT:   CHECK(tfx_glUniform1iv(loc, uniform.last_count, uniform.idata)); break;
+			case TFX_UNIFORM_FLOAT: CHECK(tfx_glUniform1fv(loc, uniform.last_count, uniform.fdata)); break;
+			case TFX_UNIFORM_VEC2:  CHECK(tfx_glUniform2fv(loc, uniform.last_count, uniform.fdata)); break;
+			case TFX_UNIFORM_VEC3:  CHECK(tfx_glUniform3fv(loc, uniform.last_count, uniform.fdata)); break;
+			case TFX_UNIFORM_VEC4:  CHECK(tfx_glUniform4fv(loc, uniform.last_count, uniform.fdata)); break;
+			case TFX_UNIFORM_MAT2:  CHECK(tfx_glUniformMatrix2fv(loc, uniform.last_count, 0, uniform.fdata)); break;
+			case TFX_UNIFORM_MAT3:  CHECK(tfx_glUniformMatrix3fv(loc, uniform.last_count, 0, uniform.fdata)); break;
+			case TFX_UNIFORM_MAT4:  CHECK(tfx_glUniformMatrix4fv(loc, uniform.last_count, 0, uniform.fdata)); break;
+			default: assert(false); break;
+		}
+	}
 }
 
 tfx_stats tfx_frame() {
@@ -2258,43 +2340,7 @@ tfx_stats tfx_frame() {
 		}
 		push_group(debug_id++, debug_label);
 
-		if (g_caps.compute) {
-			if (cd > 0) {
-				// split compute into its own section because it is infrequently used.
-				// helpful in renderdoc captures.
-				push_group(debug_id++, "Compute");
-			}
-			for (int i = 0; i < cd; i++) {
-				tfx_draw job = view->draws[i];
-				if (job.program != last_program) {
-					CHECK(tfx_glUseProgram(job.program));
-					last_program = job.program;
-				}
-				// TODO: bind image textures
-				for (int i = 0; i < 8; i++) {
-					if (job.textures[i].gl_ids[job.textures[i].gl_idx] != 0) {
-						tfx_buffer *ssbo = &job.ssbos[i];
-						if (ssbo->dirty) {
-							CHECK(tfx_glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT));
-							ssbo->dirty = false;
-						}
-						if (job.ssbo_write[i]) {
-							ssbo->dirty = true;
-						}
-						CHECK(tfx_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, i, job.ssbos[i].gl_id));
-					}
-					else {
-						CHECK(tfx_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, i, 0));
-					}
-				}
-				CHECK(tfx_glDispatchCompute(job.threads_x, job.threads_y, job.threads_z));
-			}
-			if (cd > 0) {
-				pop_group();
-			}
-		}
-
-		if (nd == 0) {
+		if (nd == 0 && cd == 0) {
 			pop_group();
 			continue;
 		}
@@ -2327,6 +2373,8 @@ tfx_stats tfx_frame() {
 			last_canvas->current_height = last_canvas->height;
 			last_canvas->current_mip = 0;
 		}
+
+		// resolve msaa if needed
 		if (last_canvas && last_canvas->msaa && ((canvas_changed && last_mip == 0) || (mip_changed && last_mip == 0))) {
 			GLenum mask = 0;
 			for (unsigned i = 0; i < last_canvas->allocated; i++) {
@@ -2349,28 +2397,95 @@ tfx_stats tfx_frame() {
 		int nb = sb_count(view->blits);
 		stats.blits += nb;
 
-		// untested
 		if (nb > 0) {
 			push_group(debug_id++, "Blit");
-
 			for (int b = 0; b < nb; b++) {
 				tfx_blit_op *blit = &view->blits[b];
 				tfx_canvas *src = blit->source;
-
-				CHECK(tfx_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, canvas->msaa ? canvas->gl_fbo[1] : canvas->gl_fbo[0]));
-				CHECK(tfx_glBindFramebuffer(GL_READ_FRAMEBUFFER, src->msaa ? src->gl_fbo[1] : src->gl_fbo[0]));
-				if (blit->source_mip != src->current_mip) {
-					// TODO: calculate correct dest size, update mip bindings
-					assert(false);
-					// CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, attach, GL_TEXTURE_2D, attachment->gl_ids[0], canvas->current_mip));
+				if (tfx_glCopyImageSubData) {
+					int argh = 0;
+					if (canvas->attachments[0].is_depth) {
+						argh = 1;
+					}
+					CHECK(tfx_glCopyImageSubData(
+						src->attachments[argh].gl_ids[0], GL_TEXTURE_2D, blit->source_mip,
+						blit->rect.x, blit->rect.y, 0,
+						canvas->attachments[0].gl_ids[0], GL_TEXTURE_2D, canvas->current_mip,
+						blit->rect.x, blit->rect.y, 0,
+						blit->rect.w, blit->rect.h, 1
+					));
+				} else {
+					CHECK(tfx_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, canvas->msaa ? canvas->gl_fbo[1] : canvas->gl_fbo[0]));
+					CHECK(tfx_glBindFramebuffer(GL_READ_FRAMEBUFFER, src->msaa ? src->gl_fbo[1] : src->gl_fbo[0]));
+					if (blit->source_mip != src->current_mip) {
+						// TODO: calculate correct dest size, update mip bindings
+						assert(false);
+						// CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, attach, GL_TEXTURE_2D, attachment->gl_ids[0], canvas->current_mip));
+					}
+					CHECK(tfx_glBlitFramebuffer(
+						blit->rect.x, blit->rect.y, blit->rect.w, blit->rect.h, // src
+						blit->rect.x, blit->rect.y, blit->rect.w, blit->rect.h, // dst
+						blit->mask, GL_NEAREST
+					));
 				}
-				CHECK(tfx_glBlitFramebuffer(
-					blit->rect.x, blit->rect.y, blit->rect.w, blit->rect.h, // src
-					blit->rect.x, blit->rect.y, blit->rect.w, blit->rect.h, // dst
-					blit->mask, GL_NEAREST
-				));
 			}
+			pop_group();
+		}
 
+		// run compute after blit so compute can rely on msaa being resolved first.
+		if (g_caps.compute && cd > 0) {
+			push_group(debug_id++, "Compute");
+			for (int i = 0; i < cd; i++) {
+				tfx_draw job = view->jobs[i];
+				if (job.program != last_program) {
+					CHECK(tfx_glUseProgram(job.program));
+					last_program = job.program;
+				}
+
+				for (int j = 0; j < 8; j++) {
+					// make sure writing to image has finished before read
+					if (job.textures[j].gl_ids[job.textures[j].gl_idx] != 0) {
+						tfx_texture *tex = &job.textures[j];
+						static PFNGLBINDIMAGETEXTUREPROC tfx_glBindImageTexture = NULL;
+						if (!tfx_glBindImageTexture) {
+							tfx_glBindImageTexture = g_platform_data.gl_get_proc_address("glBindImageTexture");
+						}
+						if (tex->dirty) {
+							CHECK(tfx_glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT));
+							tex->dirty = false;
+						}
+						bool write = job.textures_write[j];
+						if (write) {
+							tex->dirty = true;
+						}
+						tfx_texture_params *internal = (tfx_texture_params*)tex->internal;
+						GLenum fmt = internal->internal_format;
+						switch (fmt) {
+							case GL_DEPTH_COMPONENT16: fmt = GL_R16F; break;
+							case GL_DEPTH_COMPONENT24: assert(false); break;
+							case GL_DEPTH_COMPONENT32: fmt = GL_R32F; break;
+							default: break;
+						}
+						CHECK(tfx_glBindImageTexture(j, tex->gl_ids[tex->gl_idx], job.textures_mip[j], false, 0, write ? GL_WRITE_ONLY : GL_READ_ONLY, fmt));
+					}
+					if (job.ssbos[j].gl_id != 0) {
+						tfx_buffer *ssbo = &job.ssbos[j];
+						if (ssbo->dirty) {
+							CHECK(tfx_glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT));
+							ssbo->dirty = false;
+						}
+						if (job.ssbo_write[j]) {
+							ssbo->dirty = true;
+						}
+						CHECK(tfx_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, j, job.ssbos[j].gl_id));
+					}
+					else {
+						//CHECK(tfx_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, j, 0));
+					}
+				}
+				update_uniforms(&job);
+				CHECK(tfx_glDispatchCompute(job.threads_x, job.threads_y, job.threads_z));
+			}
 			pop_group();
 		}
 
@@ -2627,33 +2742,7 @@ tfx_stats tfx_frame() {
 				CHECK(tfx_glDisable(GL_SCISSOR_TEST));
 			}
 
-			int nu = sb_count(draw.uniforms);
-			for (int j = 0; j < nu; j++) {
-				tfx_uniform uniform = draw.uniforms[j];
-
-				tfx_shadermap *val = tfx_proglookup(g_uniform_map, draw.program);
-				tfx_locmap **locmap = val->value;
-				tfx_locmap *locval = tfx_loclookup(locmap, uniform.name);
-#ifdef TFX_DEBUG
-				assert(locval);
-#endif
-
-				GLint loc = locval->value;
-				if (loc < 0) {
-					continue;
-				}
-				switch (uniform.type) {
-					case TFX_UNIFORM_INT:   CHECK(tfx_glUniform1iv(loc, uniform.last_count, uniform.idata)); break;
-					case TFX_UNIFORM_FLOAT: CHECK(tfx_glUniform1fv(loc, uniform.last_count, uniform.fdata)); break;
-					case TFX_UNIFORM_VEC2:  CHECK(tfx_glUniform2fv(loc, uniform.last_count, uniform.fdata)); break;
-					case TFX_UNIFORM_VEC3:  CHECK(tfx_glUniform3fv(loc, uniform.last_count, uniform.fdata)); break;
-					case TFX_UNIFORM_VEC4:  CHECK(tfx_glUniform4fv(loc, uniform.last_count, uniform.fdata)); break;
-					case TFX_UNIFORM_MAT2:  CHECK(tfx_glUniformMatrix2fv(loc, uniform.last_count, 0, uniform.fdata)); break;
-					case TFX_UNIFORM_MAT3:  CHECK(tfx_glUniformMatrix3fv(loc, uniform.last_count, 0, uniform.fdata)); break;
-					case TFX_UNIFORM_MAT4:  CHECK(tfx_glUniformMatrix4fv(loc, uniform.last_count, 0, uniform.fdata)); break;
-					default: assert(false); break;
-				}
-			}
+			update_uniforms(&draw);
 
 			if (draw.callback != NULL) {
 				draw.callback();

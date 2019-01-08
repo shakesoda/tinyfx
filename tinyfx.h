@@ -115,9 +115,15 @@ typedef enum tfx_format {
 	// TFX_FORMAT_RG11B10F_D16,
 	// TFX_FORMAT_RGBA16F_D16,
 
+	// single channel
+	TFX_FORMAT_R32UI,
+	TFX_FORMAT_R32F,
+
 	// depth only
 	TFX_FORMAT_D16,
 	TFX_FORMAT_D24,
+	TFX_FORMAT_D32,
+	TFX_FORMAT_D32F,
 	//TFX_FORMAT_D24_S8
 } tfx_format;
 
@@ -171,6 +177,7 @@ typedef struct tfx_texture {
 	uint16_t mip_count;
 	tfx_format format;
 	bool is_depth;
+	bool dirty;
 	uint16_t flags, _pad0;
 	void *internal;
 } tfx_texture;
@@ -312,7 +319,7 @@ TFX_API void tfx_set_state(uint64_t flags);
 TFX_API void tfx_set_scissor(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
 TFX_API void tfx_set_texture(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot);
 TFX_API void tfx_set_buffer(tfx_buffer *buf, uint8_t slot, bool write);
-// TFX_API void tfx_set_image(tfx_texture *tex, uint8_t slot, bool write);
+TFX_API void tfx_set_image(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot, uint8_t mip, bool write);
 TFX_API void tfx_set_vertices(tfx_buffer *vbo, int count);
 TFX_API void tfx_set_indices(tfx_buffer *ibo, int count);
 TFX_API void tfx_dispatch(uint8_t id, tfx_program program, uint32_t x, uint32_t y, uint32_t z);
