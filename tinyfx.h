@@ -119,6 +119,10 @@ typedef enum tfx_format {
 	TFX_FORMAT_R32UI,
 	TFX_FORMAT_R32F,
 
+	// two channels
+	TFX_FORMAT_RG16F,
+	TFX_FORMAT_RG32F,
+
 	// depth only
 	TFX_FORMAT_D16,
 	TFX_FORMAT_D24,

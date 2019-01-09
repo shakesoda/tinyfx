@@ -124,6 +124,7 @@ static char *tfx_strdup(const char *src) {
 }
 
 #ifdef TFX_DEBUG
+//#define TFX_FATAL_ERRORS
 #	ifdef TFX_FATAL_ERRORS
 #		define CHECK(fn) fn; { GLenum _status; while ((_status = tfx_glGetError())) { if (_status == GL_NO_ERROR) break; TFX_ERROR("%s:%d GL ERROR: %d", __FILE__, __LINE__, _status); assert(false); } }
 #	else
@@ -1411,6 +1412,16 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 			params->internal_format = GL_R32F;
 			params->type = GL_FLOAT;
 			break;
+		case TFX_FORMAT_RG16F:
+			params->format = GL_RG;
+			params->internal_format = GL_RG16F;
+			params->type = GL_FLOAT;
+			break;
+		case TFX_FORMAT_RG32F:
+			params->format = GL_RG;
+			params->internal_format = GL_RG32F;
+			params->type = GL_FLOAT;
+			break;
 		// depth formats
 		case TFX_FORMAT_D16:
 			params->format = GL_DEPTH_COMPONENT;
@@ -1721,6 +1732,8 @@ tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format, uint16_t fl
 	switch (format) {
 		// just data
 		case TFX_FORMAT_R32F:
+		case TFX_FORMAT_RG16F:
+		case TFX_FORMAT_RG32F:
 		// color formats
 		case TFX_FORMAT_RGB565:
 		case TFX_FORMAT_RGBA8:
