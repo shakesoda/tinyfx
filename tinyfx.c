@@ -920,7 +920,7 @@ void tfx_reset(uint16_t width, uint16_t height, tfx_reset_flags flags) {
 		}
 	}
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER) && defined(TFX_DEBUG)
 	if (g_caps.memory_info) {
 		GLint memory;
 		// GPU_MEMORY_INFO_TOTAL_AVAILABLE_MEMORY_NVX    
@@ -1829,6 +1829,8 @@ void tfx_set_uniform(tfx_uniform *uniform, const float *data, const int count) {
 	}
 
 	uniform->data = g_ub_cursor;
+	uint32_t offset = (g_ub_cursor + size - g_uniform_buffer);
+	assert(offset < TFX_UNIFORM_BUFFER_SIZE);
 	memcpy(uniform->fdata, data, size);
 	g_ub_cursor += size;
 
@@ -1844,6 +1846,8 @@ void tfx_set_uniform_int(tfx_uniform *uniform, const int *data, const int count)
 	}
 
 	uniform->data = g_ub_cursor;
+	uint32_t offset = (g_ub_cursor + size - g_uniform_buffer);
+	assert(offset < TFX_UNIFORM_BUFFER_SIZE);
 	memcpy(uniform->idata, data, size);
 	g_ub_cursor += size;
 
@@ -2133,6 +2137,7 @@ static void push_uniforms(tfx_program program, tfx_draw *add_state) {
 		if (!tfx_slookup(found, uniform.name)) {
 			tfx_uniform found_uniform = uniform;
 			found_uniform.data = g_ub_cursor;
+			assert((g_ub_cursor + uniform.size - g_uniform_buffer) < TFX_UNIFORM_BUFFER_SIZE);
 			memcpy(found_uniform.data, uniform.data, uniform.size);
 			g_ub_cursor += uniform.size;
 
@@ -2833,6 +2838,18 @@ tfx_stats tfx_frame() {
 			last_count = real;
 
 			for (int i = 0; i < 8; i++) {
+				tfx_buffer *ssbo = &draw.ssbos[i];
+				if (ssbo->gl_id != 0) {
+					if (ssbo->dirty) {
+						CHECK(tfx_glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT));
+						ssbo->dirty = false;
+					}
+					if (draw.ssbo_write[i]) {
+						ssbo->dirty = true;
+					}
+					CHECK(tfx_glBindBufferBase(GL_SHADER_STORAGE_BUFFER, i, draw.ssbos[i].gl_id));
+				}
+
 				tfx_texture *tex = &draw.textures[i];
 				if (tex->gl_ids[tex->gl_idx] != 0) {
 					CHECK(tfx_glActiveTexture(GL_TEXTURE0 + i));
