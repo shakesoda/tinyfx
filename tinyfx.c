@@ -1305,18 +1305,19 @@ void tfx_vertex_format_end(tfx_vertex_format *fmt) {
 	fmt->stride = stride;
 }
 
-tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tfx_buffer_usage usage) {
+tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tfx_buffer_flags flags) {
 	GLenum gl_usage = GL_STATIC_DRAW;
-	switch (usage) {
-		case TFX_USAGE_STATIC:  gl_usage = GL_STATIC_DRAW; break;
-		case TFX_USAGE_DYNAMIC: gl_usage = GL_DYNAMIC_DRAW; break;
-		case TFX_USAGE_STREAM:  gl_usage = GL_STREAM_DRAW; break;
-		default: assert(false); break;
+	switch (flags) {
+		case TFX_BUFFER_MUTABLE: gl_usage = GL_DYNAMIC_DRAW; break;
+		//case TFX_BUFFER_STREAM:  gl_usage = GL_STREAM_DRAW; break;
+		default: break;
+		//default: assert(false); break;
 	}
 
 	tfx_buffer buffer;
 	memset(&buffer, 0, sizeof(tfx_buffer));
 	buffer.gl_id = 0;
+	buffer.flags = flags;
 	if (format) {
 		assert(format->stride > 0);
 
@@ -2888,7 +2889,11 @@ tfx_stats tfx_frame() {
 					draw.ibo.dirty = false;
 				}
 				CHECK(tfx_glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, draw.ibo.gl_id));
-				CHECK(tfx_glDrawElementsInstanced(mode, draw.indices, GL_UNSIGNED_SHORT, (GLvoid*)draw.offset, 1*instance_mul));
+				GLenum index_mode = GL_UNSIGNED_SHORT;
+				if ((draw.ibo.flags & TFX_BUFFER_INDEX_32) == TFX_BUFFER_INDEX_32) {
+					index_mode = GL_UNSIGNED_INT;
+				}
+				CHECK(tfx_glDrawElementsInstanced(mode, draw.indices, index_mode, (GLvoid*)draw.offset, 1*instance_mul));
 			}
 			else {
 				CHECK(tfx_glDrawArraysInstanced(mode, 0, (GLsizei)draw.indices, 1*instance_mul));

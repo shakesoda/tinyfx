@@ -8,14 +8,15 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 
-typedef enum tfx_buffer_usage {
-	// only occasionally changed, if never
-	TFX_USAGE_STATIC = 0,
+typedef enum tfx_buffer_flags {
+	TFX_BUFFER_NONE = 0,
+	// for index buffers: use 32-bit instead of 16-bit indices.
+	TFX_BUFFER_INDEX_32 = 1 << 0,
 	// updated regularly (once per game tick)
-	TFX_USAGE_DYNAMIC,
+	TFX_BUFFER_MUTABLE = 1 << 1,
 	// temporary (updated many times per frame)
-	TFX_USAGE_STREAM
-} tfx_buffer_usage;
+	// TFX_BUFFER_STREAM  = 1 << 2
+} tfx_buffer_flags;
 
 typedef enum tfx_depth_test {
 	TFX_DEPTH_TEST_NONE = 0,
@@ -230,6 +231,7 @@ typedef struct tfx_buffer {
 	unsigned gl_id;
 	bool dirty;
 	bool has_format;
+	tfx_buffer_flags flags;
 	tfx_vertex_format format;
 } tfx_buffer;
 
@@ -279,7 +281,7 @@ TFX_API size_t tfx_vertex_format_offset(tfx_vertex_format *fmt, uint8_t slot);
 TFX_API uint32_t tfx_transient_buffer_get_available(tfx_vertex_format *fmt);
 TFX_API tfx_transient_buffer tfx_transient_buffer_new(tfx_vertex_format *fmt, uint16_t num_verts);
 
-TFX_API tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tfx_buffer_usage usage);
+TFX_API tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tfx_buffer_flags flags);
 
 TFX_API tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data, tfx_format format, uint16_t flags);
 TFX_API void tfx_texture_update(tfx_texture *tex, void *data);
