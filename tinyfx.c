@@ -295,6 +295,7 @@ PFNGLGETPROGRAMINFOLOGPROC tfx_glGetProgramInfoLog;
 PFNGLDELETEPROGRAMPROC tfx_glDeleteProgram;
 PFNGLGENTEXTURESPROC tfx_glGenTextures;
 PFNGLBINDTEXTUREPROC tfx_glBindTexture;
+PFNGLBINDTEXTURESPROC tfx_glBindTextures;
 PFNGLTEXPARAMETERIPROC tfx_glTexParameteri;
 PFNGLTEXPARAMETERIVPROC tfx_glTexParameteriv;
 PFNGLTEXPARAMETERFPROC tfx_glTexParameterf;
@@ -393,6 +394,7 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glDeleteProgram = get_proc_address("glDeleteProgram");
 	tfx_glGenTextures = get_proc_address("glGenTextures");
 	tfx_glBindTexture = get_proc_address("glBindTexture");
+	tfx_glBindTextures = get_proc_address("glBindTextures"); // GL_ARB_multi_bind (GL 4.4)
 	tfx_glTexParameteri = get_proc_address("glTexParameteri");
 	tfx_glTexParameteriv = get_proc_address("glTexParameteriv");
 	tfx_glTexParameterf = get_proc_address("glTexParameterf");
@@ -2929,13 +2931,14 @@ tfx_stats tfx_frame() {
 				}
 				last_count = real;
 			}
-			else {
+			else if (last_count > 0) {
 				last_count = 0;
 				for (int i = 0; i < 8; i++) {
 					CHECK(tfx_glDisableVertexAttribArray(i));
 				}
 			}
 
+			GLuint bind_units[8];
 			for (int i = 0; i < 8; i++) {
 				tfx_buffer *ssbo = &draw.ssbos[i];
 				if (ssbo->gl_id != 0) {
@@ -2950,7 +2953,9 @@ tfx_stats tfx_frame() {
 				}
 
 				tfx_texture *tex = &draw.textures[i];
-				if (tex->gl_ids[tex->gl_idx] != 0) {
+				GLuint id = tex->gl_ids[tex->gl_idx];
+				bind_units[i] = id;
+				if (!tfx_glBindTextures && id > 0) {
 					CHECK(tfx_glActiveTexture(GL_TEXTURE0 + i));
 
 					bool cube = (tex->flags & TFX_TEXTURE_CUBE) == TFX_TEXTURE_CUBE;
@@ -2959,11 +2964,11 @@ tfx_stats tfx_frame() {
 						assert(fmt != GL_TEXTURE_CUBE_MAP);
 						fmt = GL_TEXTURE_2D_ARRAY;
 					}
-					CHECK(tfx_glBindTexture(fmt, tex->gl_ids[tex->gl_idx]));
-#ifdef TFX_DEBUG
-					assert(tex->gl_ids[tex->gl_idx] > 0);
-#endif
+					CHECK(tfx_glBindTexture(fmt, id));
 				}
+			}
+			if (tfx_glBindTextures) {
+				CHECK(tfx_glBindTextures(0, 8, bind_units));
 			}
 
 			int instance_mul = view->instance_mul;
