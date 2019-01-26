@@ -1440,6 +1440,16 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 			params->internal_format = GL_RGB;
 			params->type = GL_UNSIGNED_SHORT_5_6_5;
 			break;
+		case TFX_FORMAT_SRGB8:
+			params->format = GL_RGB;
+			params->internal_format = GL_SRGB8;
+			params->type = GL_UNSIGNED_BYTE;
+			break;
+		case TFX_FORMAT_SRGB8_A8:
+			params->format = GL_RGBA;
+			params->internal_format = GL_SRGB8_ALPHA8;
+			params->type = GL_UNSIGNED_BYTE;
+			break;
 		case TFX_FORMAT_RGBA8:
 			params->format = GL_RGBA;
 			params->internal_format = GL_RGBA;
