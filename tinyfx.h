@@ -330,7 +330,7 @@ TFX_API void tfx_set_texture(tfx_uniform *uniform, tfx_texture *tex, uint8_t slo
 TFX_API void tfx_set_buffer(tfx_buffer *buf, uint8_t slot, bool write);
 TFX_API void tfx_set_image(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot, uint8_t mip, bool write);
 TFX_API void tfx_set_vertices(tfx_buffer *vbo, int count);
-TFX_API void tfx_set_indices(tfx_buffer *ibo, int count);
+TFX_API void tfx_set_indices(tfx_buffer *ibo, int count, int offset);
 TFX_API void tfx_dispatch(uint8_t id, tfx_program program, uint32_t x, uint32_t y, uint32_t z);
 // TFX_API void tfx_submit_ordered(uint8_t id, tfx_program program, uint32_t depth, bool retain);
 TFX_API void tfx_submit(uint8_t id, tfx_program program, bool retain);

@@ -2158,9 +2158,10 @@ void tfx_set_vertices(tfx_buffer *vbo, int count) {
 	}
 }
 
-void tfx_set_indices(tfx_buffer *ibo, int count) {
+void tfx_set_indices(tfx_buffer *ibo, int count, int offset) {
 	g_tmp_draw.ibo = *ibo;
 	g_tmp_draw.use_ibo = true;
+	g_tmp_draw.offset = offset;
 	g_tmp_draw.indices = count;
 }
 
@@ -2846,7 +2847,7 @@ tfx_stats tfx_frame() {
 				draw.callback();
 			}
 
-			if (!draw.use_vbo) {
+			if (!draw.use_vbo && !draw.use_ibo) {
 				continue;
 			}
 
@@ -2861,61 +2862,69 @@ tfx_stats tfx_frame() {
 				default: break; // unspecified = triangles.
 			}
 
-			GLuint vbo = draw.vbo.gl_id;
-#ifdef TFX_DEBUG
-			assert(vbo != 0);
-#endif
+			if (draw.use_vbo) {
+				GLuint vbo = draw.vbo.gl_id;
+	#ifdef TFX_DEBUG
+				assert(vbo != 0);
+	#endif
 
-			if (draw.vbo.dirty && tfx_glMemoryBarrier) {
-				CHECK(tfx_glMemoryBarrier(GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT));
-				draw.vbo.dirty = false;
-			}
-
-			uint32_t va_offset = 0;
-			if (draw.use_tvb) {
-				draw.vbo.format = draw.tvb_fmt;
-				va_offset = draw.offset;
-			}
-			tfx_vertex_format *fmt = &draw.vbo.format;
-			assert(fmt != NULL);
-			assert(fmt->stride > 0);
-
-			CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, vbo));
-
-			int nc = fmt->count;
-#ifdef TFX_DEBUG
-			assert(nc < 8); // the mask is only 8 bits
-#endif
-
-			int real = 0;
-			for (int i = 0; i < nc; i++) {
-				if ((fmt->component_mask & (1 << i)) == 0) {
-					continue;
+				if (draw.vbo.dirty && tfx_glMemoryBarrier) {
+					CHECK(tfx_glMemoryBarrier(GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT));
+					draw.vbo.dirty = false;
 				}
-				tfx_vertex_component vc = fmt->components[i];
-				GLenum gl_type = GL_FLOAT;
-				switch (vc.type) {
-					case TFX_TYPE_SKIP: continue;
-					case TFX_TYPE_UBYTE:  gl_type = GL_UNSIGNED_BYTE; break;
-					case TFX_TYPE_BYTE:   gl_type = GL_BYTE; break;
-					case TFX_TYPE_USHORT: gl_type = GL_UNSIGNED_SHORT; break;
-					case TFX_TYPE_SHORT:  gl_type = GL_SHORT; break;
-					case TFX_TYPE_FLOAT: break;
-					default: assert(false); break;
-				}
-				if (i >= last_count) {
-					CHECK(tfx_glEnableVertexAttribArray(real));
-				}
-				CHECK(tfx_glVertexAttribPointer(real, (GLint)vc.size, gl_type, vc.normalized, (GLsizei)fmt->stride, (GLvoid*)(vc.offset + va_offset)));
-				real += 1;
-			}
 
-			last_count = last_count < 0 ? 0 : last_count;
-			nc = last_count - nc;
-			for (int i = 0; i <= nc; i++) {
-				CHECK(tfx_glDisableVertexAttribArray(last_count - i));
+				uint32_t va_offset = 0;
+				if (draw.use_tvb) {
+					draw.vbo.format = draw.tvb_fmt;
+					va_offset = draw.offset;
+				}
+				tfx_vertex_format *fmt = &draw.vbo.format;
+				assert(fmt != NULL);
+				assert(fmt->stride > 0);
+
+				CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, vbo));
+
+				int nc = fmt->count;
+	#ifdef TFX_DEBUG
+				assert(nc < 8); // the mask is only 8 bits
+	#endif
+
+				int real = 0;
+				for (int i = 0; i < nc; i++) {
+					if ((fmt->component_mask & (1 << i)) == 0) {
+						continue;
+					}
+					tfx_vertex_component vc = fmt->components[i];
+					GLenum gl_type = GL_FLOAT;
+					switch (vc.type) {
+						case TFX_TYPE_SKIP: continue;
+						case TFX_TYPE_UBYTE:  gl_type = GL_UNSIGNED_BYTE; break;
+						case TFX_TYPE_BYTE:   gl_type = GL_BYTE; break;
+						case TFX_TYPE_USHORT: gl_type = GL_UNSIGNED_SHORT; break;
+						case TFX_TYPE_SHORT:  gl_type = GL_SHORT; break;
+						case TFX_TYPE_FLOAT: break;
+						default: assert(false); break;
+					}
+					if (i >= last_count) {
+						CHECK(tfx_glEnableVertexAttribArray(real));
+					}
+					CHECK(tfx_glVertexAttribPointer(real, (GLint)vc.size, gl_type, vc.normalized, (GLsizei)fmt->stride, (GLvoid*)(vc.offset + va_offset)));
+					real += 1;
+				}
+
+				last_count = last_count < 0 ? 0 : last_count;
+				nc = last_count - nc;
+				for (int i = 0; i <= nc; i++) {
+					CHECK(tfx_glDisableVertexAttribArray(last_count - i));
+				}
+				last_count = real;
 			}
-			last_count = real;
+			else {
+				last_count = 0;
+				for (int i = 0; i < 8; i++) {
+					CHECK(tfx_glDisableVertexAttribArray(i));
+				}
+			}
 
 			for (int i = 0; i < 8; i++) {
 				tfx_buffer *ssbo = &draw.ssbos[i];

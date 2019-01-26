@@ -149,8 +149,8 @@ namespace tfx {
 	inline void set_vertices(Buffer &vbo, int count = 0) {
 		tfx_set_vertices(&vbo.buffer, count);
 	}
-	inline void set_indices(Buffer &ibo, int count) {
-		tfx_set_indices(&ibo.buffer, count);
+	inline void set_indices(Buffer &ibo, int count, int offset = 0) {
+		tfx_set_indices(&ibo.buffer, count, offset);
 	}
 	inline void dispatch(uint8_t id, Program &program, uint32_t x, uint32_t y, uint32_t z) {
 		tfx_dispatch(id, program.program, x, y, z);
