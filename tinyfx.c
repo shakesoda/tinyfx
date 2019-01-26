@@ -775,6 +775,7 @@ static tfx_uniform *g_uniforms = NULL;
 static uint8_t *g_uniform_buffer = NULL;
 static uint8_t *g_ub_cursor = NULL;
 static tfx_shadermap **g_uniform_map = NULL;
+static tfx_buffer *g_buffers = NULL;
 
 static tfx_view g_views[VIEW_MAX];
 
@@ -963,13 +964,20 @@ void tfx_shutdown() {
 	while (nt-- > 0) {
 		tfx_texture_free(&g_textures[nt]);
 	}
+	sb_free(g_textures);
+
+	int nb = sb_count(g_buffers);
+	while (nb-- > 0) {
+		tfx_buffer_free(&g_buffers[nb]);
+	}
+	sb_free(g_buffers);
 
 	tfx_glUseProgram(0);
 	int np = sb_count(g_programs);
 	for (int i = 0; i < np; i++) {
 		tfx_glDeleteProgram(g_programs[i]);
 	}
-	g_programs = NULL;
+	sb_free(g_programs);
 
 #ifdef TFX_LEAK_CHECK
 	stb_leakcheck_dumpmem();
@@ -1332,7 +1340,57 @@ tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tf
 		CHECK(tfx_glBufferData(GL_ARRAY_BUFFER, size, data, gl_usage));
 	}
 
+	sb_push(g_buffers, buffer);
+
 	return buffer;
+}
+
+typedef struct tfx_buffer_params {
+	uint32_t offset;
+	uint32_t size;
+	void *update_data;
+} tfx_buffer_params;
+
+static tfx_buffer *get_internal_buffer(tfx_buffer *buf) {
+	int nb = sb_count(g_buffers);
+	for (int i = 0; i < nb; i++) {
+		if (g_buffers[i].gl_id == buf->gl_id) {
+			return &g_buffers[i];
+		}
+	}
+	return NULL;
+}
+
+void tfx_buffer_update(tfx_buffer *buf, void *data, uint32_t offset, uint32_t size) {
+	assert(buf != NULL);
+	assert((buf->flags & TFX_BUFFER_MUTABLE) == TFX_BUFFER_MUTABLE);
+	assert(size > 0);
+	assert(data != NULL);
+	tfx_buffer_params *params = buf->internal;
+	if (!buf->internal) {
+		params = calloc(1, sizeof(tfx_buffer_params));
+	}
+	params->update_data = data;
+	params->offset = offset;
+	params->size = size;
+	get_internal_buffer(buf)->internal = params;
+}
+
+void tfx_buffer_free(tfx_buffer *buf) {
+	CHECK(tfx_glDeleteBuffers(1, &buf->gl_id));
+	if (buf->internal) {
+		free(buf->internal);
+	}
+	int nb = sb_count(g_buffers);
+	for (int i = 0; i < nb; i++) {
+		tfx_buffer *cached = &g_buffers[i];
+		// we only need to check index 0, as these ids cannot overlap or be reused.
+		if (buf->gl_id == cached->gl_id) {
+			g_buffers[i] = g_buffers[nb - 1];
+			// this, uh, might not be right.
+			stb__sbraw(g_buffers)[1] -= 1;
+		}
+	}
 }
 
 typedef struct tfx_texture_params {
@@ -2317,6 +2375,27 @@ tfx_stats tfx_frame() {
 		}
 		else {
 			CHECK(tfx_glBufferSubData(GL_ARRAY_BUFFER, 0, g_transient_buffer.offset, g_transient_buffer.data));
+		}
+	}
+
+	int nbb = sb_count(g_buffers);
+	for (int i = 0; i < nbb; i++) {
+		tfx_buffer *buf = &g_buffers[i];
+		tfx_buffer_params *params = (tfx_buffer_params*)buf->internal;
+		if (params) {
+			CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, buf->gl_id));
+			if (tfx_glMapBufferRange && tfx_glUnmapBuffer) {
+				void *ptr = tfx_glMapBufferRange(GL_ARRAY_BUFFER, params->offset, params->size, GL_MAP_WRITE_BIT);
+				if (ptr) {
+					memcpy(ptr, params->update_data, params->size);
+					CHECK(tfx_glUnmapBuffer(GL_ARRAY_BUFFER));
+				}
+			}
+			else {
+				CHECK(tfx_glBufferSubData(GL_ARRAY_BUFFER, params->offset, params->size, params->update_data));
+			}
+			free(params);
+			buf->internal = NULL;
 		}
 	}
 
