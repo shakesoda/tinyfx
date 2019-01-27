@@ -2389,7 +2389,7 @@ void update_uniforms(tfx_draw *draw) {
 	}
 }
 
-static uint64_t last_timings[VIEW_MAX];
+static tfx_timing_info last_timings[VIEW_MAX];
 
 tfx_stats tfx_frame() {
 	/* This isn't used on RPi, but should free memory on some devices. When
@@ -2404,7 +2404,7 @@ tfx_stats tfx_frame() {
 	tfx_stats stats;
 	memset(&stats, 0, sizeof(tfx_stats));
 	stats.timings = last_timings;
-	memset(last_timings, 0, sizeof(uint64_t)*VIEW_MAX);
+	memset(last_timings, 0, sizeof(tfx_timing_info)*VIEW_MAX);
 
 	//CHECK(tfx_glEnable(GL_FRAMEBUFFER_SRGB));
 
@@ -2515,8 +2515,11 @@ tfx_stats tfx_frame() {
 				GLuint64 now = result - last_result;
 				last_result = result;
 
+				stats.timings[stats.num_timings].id = id;
+				stats.timings[stats.num_timings].name = view->name;
+
 				if (stats.num_timings > 0) {
-					stats.timings[stats.num_timings-1] = now;
+					stats.timings[stats.num_timings-1].time = now;
 				}
 				stats.num_timings += 1;
 			}
@@ -3096,7 +3099,7 @@ tfx_stats tfx_frame() {
 		if (result_available) {
 			GLuint64 result = 0;
 			CHECK(tfx_glGetQueryObjectui64v(g_timers[idx], GL_QUERY_RESULT, &result));
-			stats.timings[stats.num_timings-1] = result - last_result;
+			stats.timings[stats.num_timings-1].time = result - last_result;
 		}
 	}
 

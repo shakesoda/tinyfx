@@ -250,11 +250,17 @@ typedef struct tfx_transient_buffer {
 
 typedef void (*tfx_draw_callback)(void);
 
+typedef struct tfx_timing_info {
+	uint64_t time;
+	uint8_t id, _pad0[3];
+	const char *name;
+} tfx_timing_info;
+
 typedef struct tfx_stats {
 	uint32_t draws;
 	uint32_t blits;
 	uint32_t num_timings;
-	uint64_t *timings;
+	tfx_timing_info *timings;
 } tfx_stats;
 
 typedef struct tfx_caps {
