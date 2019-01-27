@@ -87,6 +87,7 @@ enum {
 typedef enum tfx_reset_flags {
 	TFX_RESET_NONE = 0,
 	TFX_RESET_MAX_ANISOTROPY = 1 << 0,
+	TFX_RESET_REPORT_GPU_TIMINGS = 1 << 1
 	// TFX_RESET_DEBUG...
 	// TFX_RESET_VR
 } tfx_reset_flags;
@@ -252,6 +253,8 @@ typedef void (*tfx_draw_callback)(void);
 typedef struct tfx_stats {
 	uint32_t draws;
 	uint32_t blits;
+	uint32_t num_timings;
+	uint64_t *timings;
 } tfx_stats;
 
 typedef struct tfx_caps {

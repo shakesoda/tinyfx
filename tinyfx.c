@@ -140,6 +140,8 @@ static char *tfx_strdup(const char *src) {
 #define TFX_FATAL(msg, ...) tfx_printf(TFX_SEVERITY_FATAL, msg, __VA_ARGS__)
 
 #define VIEW_MAX 256
+#define TIMER_LATENCY 3
+#define TIMER_COUNT (VIEW_MAX*TIMER_LATENCY)
 
 // view flags
 enum {
@@ -275,6 +277,12 @@ PFNGLBLENDFUNCPROC tfx_glBlendFunc;
 PFNGLCOLORMASKPROC tfx_glColorMask;
 PFNGLGETINTEGERVPROC tfx_glGetIntegerv;
 PFNGLGETFLOATVPROC tfx_glGetFloatv;
+PFNGLGENQUERIESPROC tfx_glGenQueries;
+PFNGLDELETEQUERIESPROC tfx_glDeleteQueries;
+PFNGLBEGINQUERYPROC tfx_glBeginQuery;
+PFNGLENDQUERYPROC tfx_glEndQuery;
+PFNGLQUERYCOUNTERPROC tfx_glQueryCounter;
+PFNGLGETQUERYOBJECTUIVPROC tfx_glGetQueryObjectuiv;
 PFNGLGENBUFFERSPROC tfx_glGenBuffers;
 PFNGLBINDBUFFERPROC tfx_glBindBuffer;
 PFNGLBUFFERDATAPROC tfx_glBufferData;
@@ -374,6 +382,12 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glColorMask = get_proc_address("glColorMask");
 	tfx_glGetIntegerv = get_proc_address("glGetIntegerv");
 	tfx_glGetFloatv = get_proc_address("glGetFloatv");
+	tfx_glGenQueries = get_proc_address("glGenQueries");
+	tfx_glDeleteQueries = get_proc_address("glDeleteQueries");
+	tfx_glBeginQuery = get_proc_address("glBeginQuery");
+	tfx_glEndQuery = get_proc_address("glEndQuery");
+	tfx_glQueryCounter = get_proc_address("glQueryCounter");
+	tfx_glGetQueryObjectuiv = get_proc_address("glGetQueryObjectuiv");
 	tfx_glGenBuffers = get_proc_address("glGenBuffers");
 	tfx_glBindBuffer = get_proc_address("glBindBuffer");
 	tfx_glBufferData = get_proc_address("glBufferData");
@@ -858,12 +872,14 @@ static tfx_program *g_programs = NULL;
 static tfx_texture *g_textures = NULL;
 static tfx_reset_flags g_flags = TFX_RESET_NONE;
 static float g_max_aniso = 0.0f;
+static GLuint g_timers[TIMER_COUNT];
+static int g_timer_offset = 0;
+static bool use_timers = false;
 
 void tfx_reset(uint16_t width, uint16_t height, tfx_reset_flags flags) {
 	if (g_platform_data.gl_get_proc_address != NULL) {
 		load_em_up(g_platform_data.gl_get_proc_address);
 	}
-
 
 	g_caps = tfx_get_caps();
 	// we require these, unless/until backporting for pre-compute HW.
@@ -873,6 +889,12 @@ void tfx_reset(uint16_t width, uint16_t height, tfx_reset_flags flags) {
 	g_flags = TFX_RESET_NONE;
 	if (g_caps.anisotropic_filtering && (flags & TFX_RESET_MAX_ANISOTROPY) == TFX_RESET_MAX_ANISOTROPY) {
 		g_flags |= TFX_RESET_MAX_ANISOTROPY;
+	}
+
+	use_timers = false;
+	if (tfx_glQueryCounter && (flags & TFX_RESET_REPORT_GPU_TIMINGS) == TFX_RESET_REPORT_GPU_TIMINGS) {
+		g_flags |= TFX_RESET_REPORT_GPU_TIMINGS;
+		use_timers = true;
 	}
 
 	memset(&g_backbuffer, 0, sizeof(tfx_canvas));
@@ -935,10 +957,29 @@ void tfx_reset(uint16_t width, uint16_t height, tfx_reset_flags flags) {
 #endif
 
 	memset(&g_views, 0, sizeof(tfx_view)*VIEW_MAX);
+
+	// not supported in ES2 w/o exts
+	if (tfx_glQueryCounter) {
+		if (g_timers[0] != 0) {
+			CHECK(tfx_glDeleteQueries(TIMER_COUNT, g_timers));
+		}
+	}
+	if (use_timers) {
+		CHECK(tfx_glGenQueries(TIMER_COUNT, g_timers));
+		// dummy queries for first update
+		for (unsigned i = 0; i < TIMER_COUNT; i++) {
+			CHECK(tfx_glQueryCounter(g_timers[i], GL_TIMESTAMP));
+		}
+		g_timer_offset = 0;
+	}
 }
 
 void tfx_shutdown() {
 	tfx_frame();
+
+	if (tfx_glQueryCounter && g_timers[0] != 0) {
+		CHECK(tfx_glDeleteQueries(TIMER_COUNT, g_timers));
+	}
 
 	// TODO: clean up all GL objects, allocs, etc.
 	free(g_uniform_buffer);
@@ -2346,6 +2387,8 @@ void update_uniforms(tfx_draw *draw) {
 	}
 }
 
+static uint64_t last_timings[VIEW_MAX];
+
 tfx_stats tfx_frame() {
 	/* This isn't used on RPi, but should free memory on some devices. When
 	 * you call tfx_frame, you should be done with your shader compiles for
@@ -2358,6 +2401,27 @@ tfx_stats tfx_frame() {
 
 	tfx_stats stats;
 	memset(&stats, 0, sizeof(tfx_stats));
+	stats.timings = last_timings;
+	memset(last_timings, 0, sizeof(uint64_t)*VIEW_MAX);
+
+	// flip active timers every other frame. we get results from previous frame.
+	uint32_t next_offset = g_timer_offset;
+	next_offset += VIEW_MAX;
+	next_offset %= TIMER_COUNT;
+
+	if (use_timers) {
+		for (unsigned i = 0; i < VIEW_MAX; i++) {
+			int idx = i + next_offset;
+			GLuint result = 0;
+			tfx_glGetQueryObjectuiv(g_timers[idx], GL_QUERY_RESULT_NO_WAIT, &result);
+			if (result != 0) {
+				stats.timings[stats.num_timings] = result;
+				stats.num_timings += 1;
+			}
+		}
+	}
+
+	g_timer_offset = next_offset;
 
 	//CHECK(tfx_glEnable(GL_FRAMEBUFFER_SRGB));
 
@@ -2449,11 +2513,11 @@ tfx_stats tfx_frame() {
 		else {
 			snprintf(debug_label, 256, "View %d", id);
 		}
+
 		push_group(debug_id++, debug_label);
 
-		if (nd == 0 && cd == 0) {
-			pop_group();
-			continue;
+		if (use_timers) {
+			CHECK(tfx_glBeginQuery(GL_TIME_ELAPSED, g_timers[id + g_timer_offset]));
 		}
 
 		stats.draws += nd;
@@ -2604,6 +2668,10 @@ tfx_stats tfx_frame() {
 
 		// this can currently only happen on error.
 		if (canvas->allocated == 0) {
+			if (use_timers) {
+				CHECK(tfx_glEndQuery(GL_TIME_ELAPSED));
+			}
+
 			pop_group();
 			continue;
 		}
@@ -3006,6 +3074,10 @@ tfx_stats tfx_frame() {
 		}
 
 #undef CHANGED
+
+		if (use_timers) {
+			CHECK(tfx_glEndQuery(GL_TIME_ELAPSED));
+		}
 
 		sb_free(view->jobs);
 		view->jobs = NULL;
