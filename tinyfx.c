@@ -141,7 +141,7 @@ static char *tfx_strdup(const char *src) {
 
 #define VIEW_MAX 256
 #define TIMER_LATENCY 3
-#define TIMER_COUNT (VIEW_MAX*TIMER_LATENCY)
+#define TIMER_COUNT ((VIEW_MAX+1)*TIMER_LATENCY)
 
 // view flags
 enum {
@@ -283,6 +283,7 @@ PFNGLBEGINQUERYPROC tfx_glBeginQuery;
 PFNGLENDQUERYPROC tfx_glEndQuery;
 PFNGLQUERYCOUNTERPROC tfx_glQueryCounter;
 PFNGLGETQUERYOBJECTUIVPROC tfx_glGetQueryObjectuiv;
+PFNGLGETQUERYOBJECTUI64VPROC tfx_glGetQueryObjectui64v;
 PFNGLGENBUFFERSPROC tfx_glGenBuffers;
 PFNGLBINDBUFFERPROC tfx_glBindBuffer;
 PFNGLBUFFERDATAPROC tfx_glBufferData;
@@ -388,6 +389,7 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glEndQuery = get_proc_address("glEndQuery");
 	tfx_glQueryCounter = get_proc_address("glQueryCounter");
 	tfx_glGetQueryObjectuiv = get_proc_address("glGetQueryObjectuiv");
+	tfx_glGetQueryObjectui64v = get_proc_address("glGetQueryObjectui64v");
 	tfx_glGenBuffers = get_proc_address("glGenBuffers");
 	tfx_glBindBuffer = get_proc_address("glBindBuffer");
 	tfx_glBufferData = get_proc_address("glBufferData");
@@ -2404,25 +2406,6 @@ tfx_stats tfx_frame() {
 	stats.timings = last_timings;
 	memset(last_timings, 0, sizeof(uint64_t)*VIEW_MAX);
 
-	// flip active timers every other frame. we get results from previous frame.
-	uint32_t next_offset = g_timer_offset;
-	next_offset += VIEW_MAX;
-	next_offset %= TIMER_COUNT;
-
-	if (use_timers) {
-		for (unsigned i = 0; i < VIEW_MAX; i++) {
-			int idx = i + next_offset;
-			GLuint result = 0;
-			tfx_glGetQueryObjectuiv(g_timers[idx], GL_QUERY_RESULT_NO_WAIT, &result);
-			if (result != 0) {
-				stats.timings[stats.num_timings] = result;
-				stats.num_timings += 1;
-			}
-		}
-	}
-
-	g_timer_offset = next_offset;
-
 	//CHECK(tfx_glEnable(GL_FRAMEBUFFER_SRGB));
 
 	// I'm not aware of any situation this is available but undesirable,
@@ -2497,6 +2480,12 @@ tfx_stats tfx_frame() {
 	tfx_canvas *last_canvas = NULL;
 	int last_count = 0;
 	GLuint last_program = 0;
+	GLuint64 last_result = 0;
+
+	// flip active timers every other frame. we get results from previous frame.
+	uint32_t next_offset = g_timer_offset;
+	next_offset += VIEW_MAX + 1;
+	next_offset %= TIMER_COUNT;
 
 	for (int id = 0; id < VIEW_MAX; id++) {
 		tfx_view *view = &g_views[id];
@@ -2517,7 +2506,21 @@ tfx_stats tfx_frame() {
 		push_group(debug_id++, debug_label);
 
 		if (use_timers) {
-			CHECK(tfx_glBeginQuery(GL_TIME_ELAPSED, g_timers[id + g_timer_offset]));
+			int idx = id + next_offset;
+			GLuint result_available = 0;
+			CHECK(tfx_glGetQueryObjectuiv(g_timers[idx], GL_QUERY_RESULT_AVAILABLE, &result_available));
+			if (result_available) {
+				GLuint64 result = 0;
+				CHECK(tfx_glGetQueryObjectui64v(g_timers[idx], GL_QUERY_RESULT, &result));
+				GLuint64 now = result - last_result;
+				last_result = result;
+
+				if (stats.num_timings > 0) {
+					stats.timings[stats.num_timings-1] = now;
+				}
+				stats.num_timings += 1;
+			}
+			CHECK(tfx_glQueryCounter(g_timers[id + g_timer_offset], GL_TIMESTAMP));
 		}
 
 		stats.draws += nd;
@@ -2668,10 +2671,6 @@ tfx_stats tfx_frame() {
 
 		// this can currently only happen on error.
 		if (canvas->allocated == 0) {
-			if (use_timers) {
-				CHECK(tfx_glEndQuery(GL_TIME_ELAPSED));
-			}
-
 			pop_group();
 			continue;
 		}
@@ -3075,10 +3074,6 @@ tfx_stats tfx_frame() {
 
 #undef CHANGED
 
-		if (use_timers) {
-			CHECK(tfx_glEndQuery(GL_TIME_ELAPSED));
-		}
-
 		sb_free(view->jobs);
 		view->jobs = NULL;
 
@@ -3090,6 +3085,22 @@ tfx_stats tfx_frame() {
 
 		pop_group();
 	}
+
+	// record the finishing time so we can figure out the last view timing
+	CHECK(tfx_glQueryCounter(g_timers[VIEW_MAX + g_timer_offset], GL_TIMESTAMP));
+
+	if (use_timers && stats.num_timings > 0) {
+		int idx = VIEW_MAX + next_offset;
+		GLuint result_available = 0;
+		CHECK(tfx_glGetQueryObjectuiv(g_timers[idx], GL_QUERY_RESULT_AVAILABLE, &result_available));
+		if (result_available) {
+			GLuint64 result = 0;
+			CHECK(tfx_glGetQueryObjectui64v(g_timers[idx], GL_QUERY_RESULT, &result));
+			stats.timings[stats.num_timings-1] = result - last_result;
+		}
+	}
+
+	g_timer_offset = next_offset;
 
 	reset();
 
