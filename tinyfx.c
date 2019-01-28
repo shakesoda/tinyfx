@@ -2615,7 +2615,6 @@ tfx_stats tfx_frame() {
 
 		// run compute after blit so compute can rely on msaa being resolved first.
 		if (g_caps.compute && cd > 0) {
-			push_group(debug_id++, "Compute");
 			for (int i = 0; i < cd; i++) {
 				tfx_draw job = view->jobs[i];
 				if (job.program != last_program) {
@@ -2667,7 +2666,6 @@ tfx_stats tfx_frame() {
 				update_uniforms(&job);
 				CHECK(tfx_glDispatchCompute(job.threads_x, job.threads_y, job.threads_z));
 			}
-			pop_group();
 		}
 
 		// TODO: defer framebuffer creation
