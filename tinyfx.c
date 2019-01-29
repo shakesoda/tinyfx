@@ -2487,6 +2487,8 @@ tfx_stats tfx_frame() {
 	next_offset += VIEW_MAX + 1;
 	next_offset %= TIMER_COUNT;
 
+	bool in_group = false;
+
 	for (int id = 0; id < VIEW_MAX; id++) {
 		tfx_view *view = &g_views[id];
 
@@ -2496,14 +2498,19 @@ tfx_stats tfx_frame() {
 			continue;
 		}
 
-		if (view->name) {
-			snprintf(debug_label, 256, "%s (%d)", view->name, id);
+		if (!in_group || view->name) {
+			if (in_group) {
+				pop_group();
+			}
+			if (view->name) {
+				snprintf(debug_label, 256, "%s (%d)", view->name, id);
+			}
+			else {
+				snprintf(debug_label, 256, "View %d", id);
+			}
+			push_group(debug_id++, debug_label);
+			in_group = true;
 		}
-		else {
-			snprintf(debug_label, 256, "View %d", id);
-		}
-
-		push_group(debug_id++, debug_label);
 
 		if (use_timers) {
 			int idx = id + next_offset;
@@ -2515,13 +2522,15 @@ tfx_stats tfx_frame() {
 				GLuint64 now = result - last_result;
 				last_result = result;
 
-				stats.timings[stats.num_timings].id = id;
-				stats.timings[stats.num_timings].name = view->name;
-
 				if (stats.num_timings > 0) {
-					stats.timings[stats.num_timings-1].time = now;
+					stats.timings[stats.num_timings-1].time += now;
 				}
-				stats.num_timings += 1;
+
+				if (view->name) {
+					stats.timings[stats.num_timings].id = id;
+					stats.timings[stats.num_timings].name = view->name;
+					stats.num_timings += 1;
+				}
 			}
 			CHECK(tfx_glQueryCounter(g_timers[id + g_timer_offset], GL_TIMESTAMP));
 		}
@@ -2579,7 +2588,6 @@ tfx_stats tfx_frame() {
 		stats.blits += nb;
 
 		if (nb > 0) {
-			push_group(debug_id++, "Blit");
 			for (int b = 0; b < nb; b++) {
 				tfx_blit_op *blit = &view->blits[b];
 				tfx_canvas *src = blit->source;
@@ -2610,7 +2618,6 @@ tfx_stats tfx_frame() {
 					));
 				}
 			}
-			pop_group();
 		}
 
 		// run compute after blit so compute can rely on msaa being resolved first.
@@ -2672,7 +2679,6 @@ tfx_stats tfx_frame() {
 
 		// this can currently only happen on error.
 		if (canvas->allocated == 0) {
-			pop_group();
 			continue;
 		}
 
@@ -3083,9 +3089,9 @@ tfx_stats tfx_frame() {
 
 		sb_free(view->blits);
 		view->blits = NULL;
-
-		pop_group();
 	}
+
+	pop_group();
 
 	// record the finishing time so we can figure out the last view timing
 	CHECK(tfx_glQueryCounter(g_timers[VIEW_MAX + g_timer_offset], GL_TIMESTAMP));
