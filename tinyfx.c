@@ -2672,13 +2672,16 @@ tfx_stats tfx_frame() {
 				}
 				update_uniforms(&job);
 				CHECK(tfx_glDispatchCompute(job.threads_x, job.threads_y, job.threads_z));
+				sb_free(job.uniforms);
+				job.uniforms = NULL;
 			}
+			sb_free(view->jobs);
+			view->jobs = NULL;
 		}
 
 		// TODO: defer framebuffer creation
 
-		// this can currently only happen on error.
-		if (canvas->allocated == 0) {
+		if (canvas->allocated == 0 || nd == 0) {
 			continue;
 		}
 
@@ -2934,6 +2937,8 @@ tfx_stats tfx_frame() {
 			}
 
 			if (!draw.use_vbo && !draw.use_ibo) {
+				sb_free(draw.uniforms);
+				draw.uniforms = NULL;
 				continue;
 			}
 
@@ -3077,6 +3082,7 @@ tfx_stats tfx_frame() {
 			}
 
 			sb_free(draw.uniforms);
+			draw.uniforms = NULL;
 		}
 
 #undef CHANGED
