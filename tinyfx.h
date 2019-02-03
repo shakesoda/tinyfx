@@ -80,8 +80,9 @@ enum {
 	TFX_TEXTURE_GEN_MIPS = 1 << 5,
 	TFX_TEXTURE_RESERVE_MIPS = 1 << 6,
 	TFX_TEXTURE_CUBE = 1 << 7,
-	TFX_TEXTURE_MSAA_X2 = 1 << 8,
-	TFX_TEXTURE_MSAA_X4 = 1 << 9
+	TFX_TEXTURE_MSAA_SAMPLE = 1 << 8,
+	TFX_TEXTURE_MSAA_X2 = 1 << 9,
+	TFX_TEXTURE_MSAA_X4 = 1 << 10
 };
 
 typedef enum tfx_reset_flags {

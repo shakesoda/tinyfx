@@ -249,6 +249,8 @@ typedef struct tfx_view {
 )
 
 static tfx_canvas g_backbuffer;
+static tfx_timing_info last_timings[VIEW_MAX];
+static tfx_platform_data g_platform_data;
 
 typedef struct tfx_glext {
 	const char *ext;
@@ -267,6 +269,25 @@ static tfx_glext available_exts[] = {
 	{ "GL_ARB_instanced_arrays", false },
 	{ "GL_ARB_seamless_cube_map", false },
 	{ "GL_EXT_texture_filter_anisotropic", false },
+	// TODO
+	// GL_AMD_vertex_shader_layer
+	// GL_AMD_vertex_shader_viewport_index
+	// GL_ARB_multi_bind
+	// GL_ARB_multi_draw_indirect
+	// GL_QCOM_texture_foveated
+	// GL_OVR_multiview2
+	// GL_OVR_multiview_multisampled_render_to_texture
+	// GL_OES_element_index_uint
+	// GL_OES_depth24
+	// GL_OES_depth_texture
+	// GL_OES_depth_texture_cube_map
+	// GL_EXT_sRGB
+	// GL_EXT_multisampled_render_to_texture
+	// GL_EXT_disjoint_timer_query
+	// GL_EXT_clip_control
+	// GL_EXT_clip_cull_distance
+	// GL_EXT_color_buffer_float
+	// GL_EXT_color_buffer_half_float
 	{ NULL, false }
 };
 
@@ -311,6 +332,7 @@ PFNGLTEXPARAMETERFPROC tfx_glTexParameterf;
 PFNGLPIXELSTOREIPROC tfx_glPixelStorei;
 PFNGLTEXIMAGE2DPROC tfx_glTexImage2D;
 PFNGLTEXIMAGE3DPROC tfx_glTexImage3D;
+PFNGLTEXIMAGE2DMULTISAMPLEPROC tfx_glTexImage2DMultisample;
 PFNGLTEXSUBIMAGE2DPROC tfx_glTexSubImage2D;
 PFNGLGENERATEMIPMAPPROC tfx_glGenerateMipmap;
 PFNGLGENFRAMEBUFFERSPROC tfx_glGenFramebuffers;
@@ -417,6 +439,7 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glPixelStorei = get_proc_address("glPixelStorei");
 	tfx_glTexImage2D = get_proc_address("glTexImage2D");
 	tfx_glTexImage3D = get_proc_address("glTexImage3D");
+	tfx_glTexImage2DMultisample = get_proc_address("glTexImage2DMultisample");
 	tfx_glTexSubImage2D = get_proc_address("glTexSubImage2D");
 	tfx_glGenerateMipmap = get_proc_address("glGenerateMipmap");
 	tfx_glGenFramebuffers = get_proc_address("glGenFramebuffers");
@@ -480,8 +503,6 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glPopDebugGroup = get_proc_address("glPopDebugGroup");
 	tfx_glInsertEventMarkerEXT = get_proc_address("glInsertEventMarkerEXT");
 }
-
-static tfx_platform_data g_platform_data;
 
 static void tfx_printf(tfx_severity severity, const char *fmt, ...) {
 	va_list args;
@@ -788,14 +809,30 @@ static void tfx_progmap_delete(tfx_shadermap **hashtab) {
 	free(hashtab);
 }
 
-// uniforms updated this frame
-static tfx_uniform *g_uniforms = NULL;
-static uint8_t *g_uniform_buffer = NULL;
-static uint8_t *g_ub_cursor = NULL;
-static tfx_shadermap **g_uniform_map = NULL;
-static tfx_buffer *g_buffers = NULL;
+static tfx_buffer *g_buffers;
 
-static tfx_view g_views[VIEW_MAX];
+typedef struct tfx_frame_state {
+	// uniforms updated this frame
+	tfx_uniform *uniforms;
+	uint8_t *uniform_buffer;
+	uint8_t *ub_cursor;
+	tfx_shadermap **uniform_map;
+	tfx_view views[VIEW_MAX];
+} tfx_frame_state;
+
+static tfx_frame_state g_back;  // staging update
+/*
+// TODO
+static tfx_frame_state g_front; // processing update
+
+void swap_state_buffer() {
+	tfx_frame_state tmp;
+	memcpy(&tmp, &g_back, sizeof(tfx_frame_state));
+
+	g_back = g_front;
+	g_front = tmp;
+}
+*/
 
 static struct {
 	uint8_t *data;
@@ -807,7 +844,12 @@ static tfx_caps g_caps;
 
 // fallback printf
 static void basic_log(const char *msg, tfx_severity level) {
+#ifdef _MSC_VER
+	OutputDebugString(msg);
+	OutputDebugString("\n");
+#else
 	printf("%s\n", msg);
+#endif
 }
 
 static void tvb_reset() {
@@ -909,10 +951,10 @@ void tfx_reset(uint16_t width, uint16_t height, tfx_reset_flags flags) {
 	g_backbuffer.attachments[0].height = height;
 	g_backbuffer.attachments[0].depth = 1;
 
-	if (!g_uniform_buffer) {
-		g_uniform_buffer = (uint8_t*)malloc(TFX_UNIFORM_BUFFER_SIZE);
-		memset(g_uniform_buffer, 0, TFX_UNIFORM_BUFFER_SIZE);
-		g_ub_cursor = g_uniform_buffer;
+	if (!g_back.uniform_buffer) {
+		g_back.uniform_buffer = (uint8_t*)malloc(TFX_UNIFORM_BUFFER_SIZE);
+		memset(g_back.uniform_buffer, 0, TFX_UNIFORM_BUFFER_SIZE);
+		g_back.ub_cursor = g_back.uniform_buffer;
 	}
 
 	if (!g_transient_buffer.data) {
@@ -921,8 +963,8 @@ void tfx_reset(uint16_t width, uint16_t height, tfx_reset_flags flags) {
 		tvb_reset();
 	}
 
-	if (!g_uniform_map) {
-		g_uniform_map = tfx_progmap_new();
+	if (!g_back.uniform_map) {
+		g_back.uniform_map = tfx_progmap_new();
 	}
 
 	// update every already loaded texture's anisotropy to max (typically 16) or 0
@@ -958,7 +1000,7 @@ void tfx_reset(uint16_t width, uint16_t height, tfx_reset_flags flags) {
 	}
 #endif
 
-	memset(&g_views, 0, sizeof(tfx_view)*VIEW_MAX);
+	memset(&g_back.views, 0, sizeof(tfx_view)*VIEW_MAX);
 
 	// not supported in ES2 w/o exts
 	if (tfx_glQueryCounter) {
@@ -984,8 +1026,8 @@ void tfx_shutdown() {
 	}
 
 	// TODO: clean up all GL objects, allocs, etc.
-	free(g_uniform_buffer);
-	g_uniform_buffer = NULL;
+	free(g_back.uniform_buffer);
+	g_back.uniform_buffer = NULL;
 
 	free(g_transient_buffer.data);
 	g_transient_buffer.data = NULL;
@@ -994,15 +1036,15 @@ void tfx_shutdown() {
 		tfx_glDeleteBuffers(1, &g_transient_buffer.buf.gl_id);
 	}
 
-	if (g_uniform_map) {
-		tfx_progmap_delete(g_uniform_map);
-		g_uniform_map = NULL;
+	if (g_back.uniform_map) {
+		tfx_progmap_delete(g_back.uniform_map);
+		g_back.uniform_map = NULL;
 	}
 
 	// this can happen if you shutdown before calling frame()
-	if (g_uniforms) {
-		sb_free(g_uniforms);
-		g_uniforms = NULL;
+	if (g_back.uniforms) {
+		sb_free(g_back.uniforms);
+		g_back.uniforms = NULL;
 	}
 
 	int nt = sb_count(g_textures);
@@ -1457,18 +1499,20 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 
 	t.gl_count = 1;
 
+	bool msaa_sample = (flags & TFX_TEXTURE_MSAA_SAMPLE) == TFX_TEXTURE_MSAA_SAMPLE;
+
 	// double buffer the texture updates, to reduce stalling.
-	if ((flags & TFX_TEXTURE_CPU_WRITABLE) == TFX_TEXTURE_CPU_WRITABLE) {
+	if ((flags & TFX_TEXTURE_CPU_WRITABLE) == TFX_TEXTURE_CPU_WRITABLE || msaa_sample) {
 		t.gl_count = 2;
 	}
 
 	int samples = 1;
 	if ((flags & TFX_TEXTURE_MSAA_X2) == TFX_TEXTURE_MSAA_X2) {
-		assert(t.gl_count = 1);
+		assert(t.gl_count == 1 || msaa_sample);
 		samples = 2;
 	}
 	if ((flags & TFX_TEXTURE_MSAA_X4) == TFX_TEXTURE_MSAA_X4) {
-		assert(t.gl_count = 1);
+		assert(t.gl_count == 1 || msaa_sample);
 		samples = 4;
 	}
 
@@ -1572,7 +1616,7 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 	t.is_depth = depth;
 	t.internal = params;
 
-	if (samples > 1) {
+	if (samples > 1 && t.gl_count == 1) {
 		CHECK(tfx_glGenRenderbuffers(1, &t.gl_msaa_id));
 		CHECK(tfx_glBindRenderbuffer(GL_RENDERBUFFER, t.gl_msaa_id));
 		CHECK(tfx_glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, params->internal_format, w, h));
@@ -1609,6 +1653,13 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 
 	for (unsigned i = 0; i < t.gl_count; i++) {
 		assert(t.gl_ids[i] > 0);
+
+		bool msaa = msaa_sample && i == 1;
+		if (msaa) {
+			mode = GL_TEXTURE_2D_MULTISAMPLE;
+			assert(layers == 1);
+			assert(!cube);
+		}
 
 		CHECK(tfx_glBindTexture(mode, t.gl_ids[i]));
 		if ((flags & TFX_TEXTURE_FILTER_POINT) == TFX_TEXTURE_FILTER_POINT) {
@@ -1654,6 +1705,10 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 			for (int j = 0; j < 6; j++) {
 				CHECK(tfx_glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + j, 0, params->internal_format, size, size, 0, params->format, params->type, NULL));
 			}
+		}
+		else if (msaa) {
+			CHECK(tfx_glTexImage2DMultisample(mode, samples, params->internal_format, w, h, false));
+			assert(!reserve_mips);
 		}
 		else {
 			CHECK(tfx_glTexImage2D(mode, 0, params->internal_format, w, h, 0, params->format, params->type, data));
@@ -1728,7 +1783,13 @@ bool canvas_reconfigure(tfx_canvas *c) {
 			continue;
 		}
 
-		CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, attach, GL_TEXTURE_2D, c->attachments[i].gl_ids[0], 0));
+		GLenum mode = GL_TEXTURE_2D;
+		GLuint id = c->attachments[i].gl_ids[0];
+		if ((c->attachments[i].flags & TFX_TEXTURE_MSAA_SAMPLE) == TFX_TEXTURE_MSAA_SAMPLE) {
+			mode = GL_TEXTURE_2D_MULTISAMPLE;
+			id = c->attachments[i].gl_ids[1];
+		}
+		CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, attach, mode, id, 0));
 	}
 
 	if (found_depth && !found_color) {
@@ -1942,13 +2003,13 @@ void tfx_set_uniform(tfx_uniform *uniform, const float *data, const int count) {
 		uniform->last_count = count;
 	}
 
-	uniform->data = g_ub_cursor;
-	uint32_t offset = (g_ub_cursor + size - g_uniform_buffer);
+	uniform->data = g_back.ub_cursor;
+	uint32_t offset = (g_back.ub_cursor + size - g_back.uniform_buffer);
 	assert(offset < TFX_UNIFORM_BUFFER_SIZE);
 	memcpy(uniform->fdata, data, size);
-	g_ub_cursor += size;
+	g_back.ub_cursor += size;
 
-	sb_push(g_uniforms, *uniform);
+	sb_push(g_back.uniforms, *uniform);
 }
 
 void tfx_set_uniform_int(tfx_uniform *uniform, const int *data, const int count) {
@@ -1959,17 +2020,17 @@ void tfx_set_uniform_int(tfx_uniform *uniform, const int *data, const int count)
 		uniform->last_count = count;
 	}
 
-	uniform->data = g_ub_cursor;
-	uint32_t offset = (g_ub_cursor + size - g_uniform_buffer);
+	uniform->data = g_back.ub_cursor;
+	uint32_t offset = (g_back.ub_cursor + size - g_back.uniform_buffer);
 	assert(offset < TFX_UNIFORM_BUFFER_SIZE);
 	memcpy(uniform->idata, data, size);
-	g_ub_cursor += size;
+	g_back.ub_cursor += size;
 
-	sb_push(g_uniforms, *uniform);
+	sb_push(g_back.uniforms, *uniform);
 }
 
 void tfx_view_set_flags(uint8_t id, tfx_view_flags flags) {
-	tfx_view *view = &g_views[id];
+	tfx_view *view = &g_back.views[id];
 #define FLAG(flags, mask) ((flags & mask) == mask)
 	if (FLAG(flags, TFX_VIEW_INVALIDATE)) {
 		view->flags |= TFXI_VIEW_INVALIDATE;
@@ -1984,7 +2045,7 @@ void tfx_view_set_flags(uint8_t id, tfx_view_flags flags) {
 
 void tfx_view_set_transform(uint8_t id, float *_view, float *proj_l, float *proj_r) {
 	// TODO: reserve tfx_world_to_view, tfx_view_to_screen uniforms
-	tfx_view *view = &g_views[id];
+	tfx_view *view = &g_back.views[id];
 	assert(view != NULL);
 	memcpy(view->view, _view, sizeof(float)*16);
 	memcpy(view->proj_left, proj_l, sizeof(float)*16);
@@ -1992,12 +2053,12 @@ void tfx_view_set_transform(uint8_t id, float *_view, float *proj_l, float *proj
 }
 
 void tfx_view_set_name(uint8_t id, const char *name) {
-	tfx_view *view = &g_views[id];
+	tfx_view *view = &g_back.views[id];
 	view->name = name;
 }
 
 void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas, int layer) {
-	tfx_view *view = &g_views[id];
+	tfx_view *view = &g_back.views[id];
 	assert(view != NULL);
 	view->has_canvas = true;
 	view->canvas = *canvas;
@@ -2005,21 +2066,21 @@ void tfx_view_set_canvas(uint8_t id, tfx_canvas *canvas, int layer) {
 }
 
 void tfx_view_set_clear_color(uint8_t id, unsigned color) {
-	tfx_view *view = &g_views[id];
+	tfx_view *view = &g_back.views[id];
 	assert(view != NULL);
 	view->flags |= TFXI_VIEW_CLEAR_COLOR;
 	view->clear_color = color;
 }
 
 void tfx_view_set_clear_depth(uint8_t id, float depth) {
-	tfx_view *view = &g_views[id];
+	tfx_view *view = &g_back.views[id];
 	assert(view != NULL);
 	view->flags |= TFXI_VIEW_CLEAR_DEPTH;
 	view->clear_depth = depth;
 }
 
 void tfx_view_set_depth_test(uint8_t id, tfx_depth_test mode) {
-	tfx_view *view = &g_views[id];
+	tfx_view *view = &g_back.views[id];
 	assert(view != NULL);
 
 	view->flags &= ~TFXI_VIEW_DEPTH_TEST_MASK;
@@ -2050,11 +2111,11 @@ static tfx_canvas *get_canvas(tfx_view *view) {
 }
 
 tfx_canvas *tfx_view_get_canvas(uint8_t id) {
-	return get_canvas(&g_views[id]);
+	return get_canvas(&g_back.views[id]);
 }
 
 uint16_t tfx_view_get_width(uint8_t id) {
-	tfx_view *view = &g_views[id];
+	tfx_view *view = &g_back.views[id];
 	assert(view != NULL);
 
 	if (view->has_canvas) {
@@ -2065,7 +2126,7 @@ uint16_t tfx_view_get_width(uint8_t id) {
 }
 
 uint16_t tfx_view_get_height(uint8_t id) {
-	tfx_view *view = &g_views[id];
+	tfx_view *view = &g_back.views[id];
 	assert(view != NULL);
 
 	if (view->has_canvas) {
@@ -2091,7 +2152,7 @@ void tfx_view_set_viewports(uint8_t id, int count, uint16_t **viewports) {
 		assert(tfx_glViewportIndexedf);
 	}
 
-	tfx_view *view = &g_views[id];
+	tfx_view *view = &g_back.views[id];
 	view->viewport_count = count;
 	for (int i = 0; i < count; i++) {
 		view->viewports[i].x = viewports[i][0];
@@ -2105,12 +2166,12 @@ void tfx_view_set_instance_mul(uint8_t id, unsigned factor) {
 	if (!g_caps.instancing) {
 		TFX_WARN("%s", "Instancing is not supported, instance mul will be ignored!");
 	}
-	tfx_view *view = &g_views[id];
+	tfx_view *view = &g_back.views[id];
 	view->instance_mul = factor;
 }
 
 void tfx_view_set_scissor(uint8_t id, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
-	tfx_view *view = &g_views[id];
+	tfx_view *view = &g_back.views[id];
 	view->flags |= TFXI_VIEW_SCISSOR;
 
 	tfx_rect rect;
@@ -2145,11 +2206,11 @@ void tfx_set_texture(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot) {
 	assert(uniform != NULL);
 	assert(uniform->count == 1);
 
-	uniform->data = g_ub_cursor;
+	uniform->data = g_back.ub_cursor;
 	uniform->idata[0] = slot;
-	g_ub_cursor += uniform->size;
+	g_back.ub_cursor += uniform->size;
 
-	sb_push(g_uniforms, *uniform);
+	sb_push(g_back.uniforms, *uniform);
 
 	assert(tex->gl_ids[tex->gl_idx] > 0);
 	g_tmp_draw.textures[slot] = *tex;
@@ -2223,13 +2284,13 @@ void tfx_set_indices(tfx_buffer *ibo, int count, int offset) {
 static void push_uniforms(tfx_program program, tfx_draw *add_state) {
 	tfx_set **found = tfx_set_new();
 
-	int n = sb_count(g_uniforms);
+	int n = sb_count(g_back.uniforms);
 	for (int i = n-1; i >= 0; i--) {
-		tfx_uniform uniform = g_uniforms[i];
+		tfx_uniform uniform = g_back.uniforms[i];
 
-		tfx_shadermap *val = tfx_proglookup(g_uniform_map, program);
+		tfx_shadermap *val = tfx_proglookup(g_back.uniform_map, program);
 		if (!val) {
-			val = tfx_progset(g_uniform_map, program);
+			val = tfx_progset(g_back.uniform_map, program);
 		}
 #ifdef TFX_DEBUG
 		assert(val);
@@ -2251,10 +2312,10 @@ static void push_uniforms(tfx_program program, tfx_draw *add_state) {
 		// only record the last update for a given uniform
 		if (!tfx_slookup(found, uniform.name)) {
 			tfx_uniform found_uniform = uniform;
-			found_uniform.data = g_ub_cursor;
-			assert((g_ub_cursor + uniform.size - g_uniform_buffer) < TFX_UNIFORM_BUFFER_SIZE);
+			found_uniform.data = g_back.ub_cursor;
+			assert((g_back.ub_cursor + uniform.size - g_back.uniform_buffer) < TFX_UNIFORM_BUFFER_SIZE);
 			memcpy(found_uniform.data, uniform.data, uniform.size);
-			g_ub_cursor += uniform.size;
+			g_back.ub_cursor += uniform.size;
 
 			tfx_sset(found, uniform.name);
 			sb_push(add_state->uniforms, found_uniform);
@@ -2265,7 +2326,7 @@ static void push_uniforms(tfx_program program, tfx_draw *add_state) {
 }
 
 void tfx_dispatch(uint8_t id, tfx_program program, uint32_t x, uint32_t y, uint32_t z) {
-	tfx_view *view = &g_views[id];
+	tfx_view *view = &g_back.views[id];
 	g_tmp_draw.program = program;
 	assert(program != 0);
 	assert(view != NULL);
@@ -2284,7 +2345,7 @@ void tfx_dispatch(uint8_t id, tfx_program program, uint32_t x, uint32_t y, uint3
 }
 
 void tfx_submit(uint8_t id, tfx_program program, bool retain) {
-	tfx_view *view = &g_views[id];
+	tfx_view *view = &g_back.views[id];
 	g_tmp_draw.program = program;
 	assert(program != 0);
 	assert(view != NULL);
@@ -2305,7 +2366,7 @@ void tfx_submit_ordered(uint8_t id, tfx_program program, uint32_t depth, bool re
 }
 
 void tfx_touch(uint8_t id) {
-	tfx_view *view = &g_views[id];
+	tfx_view *view = &g_back.views[id];
 	assert(view != NULL);
 
 	reset();
@@ -2320,12 +2381,12 @@ void tfx_blit(uint8_t dst, uint8_t src, uint16_t x, uint16_t y, uint16_t w, uint
 	rect.h = h;
 
 	tfx_blit_op blit;
-	blit.source = get_canvas(&g_views[src]);
+	blit.source = get_canvas(&g_back.views[src]);
 	blit.source_mip = mip;
 	blit.rect = rect;
 	blit.mask = 0;
 
-	tfx_view *view = &g_views[dst];
+	tfx_view *view = &g_back.views[dst];
 	tfx_canvas *canvas = get_canvas(view);
 
 	// blit to self doesn't make sense, and msaa resolve is automatic.
@@ -2364,7 +2425,7 @@ void update_uniforms(tfx_draw *draw) {
 	for (int j = 0; j < nu; j++) {
 		tfx_uniform uniform = draw->uniforms[j];
 
-		tfx_shadermap *val = tfx_proglookup(g_uniform_map, draw->program);
+		tfx_shadermap *val = tfx_proglookup(g_back.uniform_map, draw->program);
 		tfx_locmap **locmap = val->value;
 		tfx_locmap *locval = tfx_loclookup(locmap, uniform.name);
 #ifdef TFX_DEBUG
@@ -2388,8 +2449,6 @@ void update_uniforms(tfx_draw *draw) {
 		}
 	}
 }
-
-static tfx_timing_info last_timings[VIEW_MAX];
 
 tfx_stats tfx_frame() {
 	/* This isn't used on RPi, but should free memory on some devices. When
@@ -2490,7 +2549,7 @@ tfx_stats tfx_frame() {
 	bool in_group = false;
 
 	for (int id = 0; id < VIEW_MAX; id++) {
-		tfx_view *view = &g_views[id];
+		tfx_view *view = &g_back.views[id];
 
 		int nd = sb_count(view->draws);
 		int cd = sb_count(view->jobs);
@@ -2565,7 +2624,11 @@ tfx_stats tfx_frame() {
 		}
 
 		// resolve msaa if needed
-		if (last_canvas && last_canvas->msaa && ((canvas_changed && last_mip == 0) || (mip_changed && last_mip == 0))) {
+		if (last_canvas
+			&& last_canvas->msaa
+			&& (last_canvas->attachments[0].flags & TFX_TEXTURE_MSAA_SAMPLE) != TFX_TEXTURE_MSAA_SAMPLE
+			&& ((canvas_changed && last_mip == 0) || (mip_changed && last_mip == 0))
+		) {
 			GLenum mask = 0;
 			for (unsigned i = 0; i < last_canvas->allocated; i++) {
 				tfx_texture *attach = &last_canvas->attachments[i];
@@ -2631,8 +2694,9 @@ tfx_stats tfx_frame() {
 
 				for (int j = 0; j < 8; j++) {
 					// make sure writing to image has finished before read
-					if (job.textures[j].gl_ids[job.textures[j].gl_idx] != 0) {
-						tfx_texture *tex = &job.textures[j];
+					tfx_texture *tex = &job.textures[j];
+					GLuint id = tex->gl_ids[tex->gl_idx];
+					if (id != 0) {
 						static PFNGLBINDIMAGETEXTUREPROC tfx_glBindImageTexture = NULL;
 						if (!tfx_glBindImageTexture) {
 							tfx_glBindImageTexture = g_platform_data.gl_get_proc_address("glBindImageTexture");
@@ -3032,7 +3096,9 @@ tfx_stats tfx_frame() {
 				}
 
 				tfx_texture *tex = &draw.textures[i];
-				GLuint id = tex->gl_ids[tex->gl_idx];
+				bool msaa_sample = (tex->flags & TFX_TEXTURE_MSAA_SAMPLE) == TFX_TEXTURE_MSAA_SAMPLE;
+				GLuint idx = msaa_sample ? 1 : tex->gl_idx;
+				GLuint id = tex->gl_ids[idx];
 				bind_units[i] = id;
 				if (!tfx_glBindTextures && id > 0) {
 					CHECK(tfx_glActiveTexture(GL_TEXTURE0 + i));
@@ -3042,6 +3108,9 @@ tfx_stats tfx_frame() {
 					if (tex->depth > 1) {
 						assert(fmt != GL_TEXTURE_CUBE_MAP);
 						fmt = GL_TEXTURE_2D_ARRAY;
+					}
+					if (msaa_sample) {
+						fmt = GL_TEXTURE_2D_MULTISAMPLE;
 					}
 					CHECK(tfx_glBindTexture(fmt, id));
 				}
@@ -3119,10 +3188,10 @@ tfx_stats tfx_frame() {
 
 	tvb_reset();
 
-	sb_free(g_uniforms);
-	g_uniforms = NULL;
+	sb_free(g_back.uniforms);
+	g_back.uniforms = NULL;
 
-	g_ub_cursor = g_uniform_buffer;
+	g_back.ub_cursor = g_back.uniform_buffer;
 
 	CHECK(tfx_glDisable(GL_SCISSOR_TEST));
 	CHECK(tfx_glColorMask(true, true, true, true));
