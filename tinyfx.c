@@ -124,7 +124,7 @@ static char *tfx_strdup(const char *src) {
 }
 
 #ifdef TFX_DEBUG
-//#define TFX_FATAL_ERRORS
+#define TFX_FATAL_ERRORS
 #	ifdef TFX_FATAL_ERRORS
 #		define CHECK(fn) fn; { GLenum _status; while ((_status = tfx_glGetError())) { if (_status == GL_NO_ERROR) break; TFX_ERROR("%s:%d GL ERROR: %d", __FILE__, __LINE__, _status); assert(false); } }
 #	else
@@ -979,6 +979,9 @@ void tfx_reset(uint16_t width, uint16_t height, tfx_reset_flags flags) {
 		for (int i = 0; i < nt; i++) {
 			tfx_texture *tex = &g_textures[i];
 			for (unsigned j = 0; j < tex->gl_count; j++) {
+				if ((tex->flags & TFX_TEXTURE_MSAA_SAMPLE) == TFX_TEXTURE_MSAA_SAMPLE) {
+					continue;
+				}
 				GLenum fmt = GL_TEXTURE_2D;
 				if ((tex->flags & TFX_TEXTURE_CUBE) == TFX_TEXTURE_CUBE) {
 					fmt = GL_TEXTURE_CUBE_MAP;
@@ -1648,6 +1651,7 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 
 	bool mip_filter = reserve_mips || gen_mips;
 	if (mip_filter) {
+		assert(!msaa_sample);
 		t.mip_count = 1 + (int)floorf(log2f(fmaxf(t.width, t.height)));
 	}
 
@@ -1656,9 +1660,13 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 
 		bool msaa = msaa_sample && i == 1;
 		if (msaa) {
-			mode = GL_TEXTURE_2D_MULTISAMPLE;
 			assert(layers == 1);
 			assert(!cube);
+			assert(!reserve_mips);
+			mode = GL_TEXTURE_2D_MULTISAMPLE;
+			CHECK(tfx_glBindTexture(mode, t.gl_ids[i]));
+			CHECK(tfx_glTexImage2DMultisample(mode, samples, params->internal_format, w, h, false));
+			continue;
 		}
 
 		CHECK(tfx_glBindTexture(mode, t.gl_ids[i]));
@@ -1705,10 +1713,6 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 			for (int j = 0; j < 6; j++) {
 				CHECK(tfx_glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + j, 0, params->internal_format, size, size, 0, params->format, params->type, NULL));
 			}
-		}
-		else if (msaa) {
-			CHECK(tfx_glTexImage2DMultisample(mode, samples, params->internal_format, w, h, false));
-			assert(!reserve_mips);
 		}
 		else {
 			CHECK(tfx_glTexImage2D(mode, 0, params->internal_format, w, h, 0, params->format, params->type, data));
@@ -1761,7 +1765,7 @@ void tfx_texture_free(tfx_texture *tex) {
 	}
 }
 
-bool canvas_reconfigure(tfx_canvas *c) {
+bool canvas_reconfigure(tfx_canvas *c, bool msaa) {
 	bool found_color = false;
 	bool found_depth = false;
 
@@ -1785,7 +1789,7 @@ bool canvas_reconfigure(tfx_canvas *c) {
 
 		GLenum mode = GL_TEXTURE_2D;
 		GLuint id = c->attachments[i].gl_ids[0];
-		if ((c->attachments[i].flags & TFX_TEXTURE_MSAA_SAMPLE) == TFX_TEXTURE_MSAA_SAMPLE) {
+		if (msaa && (c->attachments[i].flags & TFX_TEXTURE_MSAA_SAMPLE) == TFX_TEXTURE_MSAA_SAMPLE) {
 			mode = GL_TEXTURE_2D_MULTISAMPLE;
 			id = c->attachments[i].gl_ids[1];
 		}
@@ -1842,8 +1846,9 @@ tfx_canvas tfx_canvas_attachments_new(bool claim_attachments, int count, tfx_tex
 	assert(!(c.msaa && c.cube));
 	assert(!(c.msaa && attachments[0].depth > 1));
 
+	bool msaa_sample = (attachments[0].flags & TFX_TEXTURE_MSAA_SAMPLE) == TFX_TEXTURE_MSAA_SAMPLE;
 	for (int i = 0; i < count; i++) {
-		assert(attachments[i].gl_count == 1); // TODO: bad for msaa
+		assert(attachments[i].gl_count == 1 || (msaa && msaa_sample)); // TODO: bad for msaa
 		assert(attachments[i].depth == attachments[0].depth);
 		assert((attachments[i].flags & TFX_TEXTURE_CPU_WRITABLE) != TFX_TEXTURE_CPU_WRITABLE);
 		c.attachments[i] = attachments[i];
@@ -1853,13 +1858,21 @@ tfx_canvas tfx_canvas_attachments_new(bool claim_attachments, int count, tfx_tex
 	CHECK(tfx_glGenFramebuffers(c.msaa ? 2 : 1, c.gl_fbo));
 	CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, c.gl_fbo[0]));
 
-	if (!canvas_reconfigure(&c)) {
+	if (!canvas_reconfigure(&c, false)) {
 		tfx_canvas_free(&c);
 		return c;
 	}
 
 	if (c.gl_fbo[1]) {
 		CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, c.gl_fbo[1]));
+
+		if (msaa_sample) {
+			if (!canvas_reconfigure(&c, true)) {
+				tfx_canvas_free(&c);
+			}
+			return c;
+		}
+
 		int offset = 0;
 		// sanity checking was already done by canvas_reconfigure, no need here.
 		for (unsigned i = 0; i < c.allocated; i++) {
@@ -2751,7 +2764,7 @@ tfx_stats tfx_frame() {
 
 		if (canvas->reconfigure) {
 			CHECK(tfx_glBindFramebuffer(GL_FRAMEBUFFER, canvas->gl_fbo[0]));
-			canvas_reconfigure(canvas);
+			canvas_reconfigure(canvas, false);
 			canvas->reconfigure = false;
 		}
 
