@@ -110,6 +110,7 @@ typedef enum tfx_format {
 
 	TFX_FORMAT_RGB10A2,
 	TFX_FORMAT_RG11B10F,
+	TFX_FORMAT_RGB16F,
 	TFX_FORMAT_RGBA16F,
 
 	// color + depth

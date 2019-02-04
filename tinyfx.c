@@ -124,7 +124,7 @@ static char *tfx_strdup(const char *src) {
 }
 
 #ifdef TFX_DEBUG
-#define TFX_FATAL_ERRORS
+//#define TFX_FATAL_ERRORS
 #	ifdef TFX_FATAL_ERRORS
 #		define CHECK(fn) fn; { GLenum _status; while ((_status = tfx_glGetError())) { if (_status == GL_NO_ERROR) break; TFX_ERROR("%s:%d GL ERROR: %d", __FILE__, __LINE__, _status); assert(false); } }
 #	else
@@ -1563,6 +1563,11 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 			params->internal_format = GL_R11F_G11F_B10F;
 			params->type = GL_FLOAT;
 			break;
+		case TFX_FORMAT_RGB16F:
+			params->format = GL_RGB;
+			params->internal_format = GL_RGB16F;
+			params->type = GL_FLOAT;
+			break;
 		case TFX_FORMAT_RGBA16F:
 			params->format = GL_RGBA;
 			params->internal_format = GL_RGBA16F;
@@ -1848,7 +1853,7 @@ tfx_canvas tfx_canvas_attachments_new(bool claim_attachments, int count, tfx_tex
 
 	bool msaa_sample = (attachments[0].flags & TFX_TEXTURE_MSAA_SAMPLE) == TFX_TEXTURE_MSAA_SAMPLE;
 	for (int i = 0; i < count; i++) {
-		assert(attachments[i].gl_count == 1 || (msaa && msaa_sample)); // TODO: bad for msaa
+		assert(attachments[i].gl_count == 1 || (msaa && msaa_sample));
 		assert(attachments[i].depth == attachments[0].depth);
 		assert((attachments[i].flags & TFX_TEXTURE_CPU_WRITABLE) != TFX_TEXTURE_CPU_WRITABLE);
 		c.attachments[i] = attachments[i];
@@ -3181,8 +3186,10 @@ tfx_stats tfx_frame() {
 
 	pop_group();
 
-	// record the finishing time so we can figure out the last view timing
-	CHECK(tfx_glQueryCounter(g_timers[VIEW_MAX + g_timer_offset], GL_TIMESTAMP));
+	if (use_timers) {
+		// record the finishing time so we can figure out the last view timing
+		CHECK(tfx_glQueryCounter(g_timers[VIEW_MAX + g_timer_offset], GL_TIMESTAMP));
+	}
 
 	if (use_timers && stats.num_timings > 0) {
 		int idx = VIEW_MAX + next_offset;
