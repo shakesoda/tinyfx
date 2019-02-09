@@ -1,15 +1,13 @@
 #include "tinyfx.h"
 #include "demo_util.h"
 
-static void run(state_t *state) {
-	tfx_platform_data pd;
-	pd.use_gles = true;
-	pd.context_version = 20;
-	pd.gl_get_proc_address = SDL_GL_GetProcAddress;
-	tfx_set_platform_data(pd);
-	tfx_reset(state->width, state->height, TFX_RESET_NONE);
+struct {
+	tfx_buffer vbo;
+	tfx_program prog;
+} tri_res;
 
-	uint8_t back = 1;
+void triangle_init(uint16_t w, uint16_t h) {
+	const uint8_t back = 1;
 	tfx_view_set_clear_color(back, 0x555555ff);
 	tfx_view_set_clear_depth(back, 1.0);
 	tfx_view_set_depth_test(back, TFX_DEPTH_TEST_LT);
@@ -37,7 +35,7 @@ static void run(state_t *state) {
 		NULL
 	};
 
-	tfx_program prog = tfx_program_new(vss, fss, attribs);
+	tri_res.prog = tfx_program_new(vss, fss, attribs);
 
 	float verts[] = {
 		 0.0f,  0.5f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f,
@@ -50,22 +48,22 @@ static void run(state_t *state) {
 	tfx_vertex_format_add(&fmt, 1, 4, true, TFX_TYPE_FLOAT);
 	tfx_vertex_format_end(&fmt);
 
-	tfx_buffer vbo = tfx_buffer_new(verts, sizeof(verts), &fmt, TFX_BUFFER_NONE);
-
-	while (state->alive) {
-		tfx_touch(back);
-
-		tfx_set_vertices(&vbo, 3);
-		tfx_set_state(TFX_STATE_RGB_WRITE | TFX_STATE_ALPHA_WRITE);
-		tfx_submit(back, prog, false);
-
-		tfx_frame();
-		demo_end_frame(state);
-	}
-
-	tfx_shutdown();
+	tri_res.vbo = tfx_buffer_new(verts, sizeof(verts), &fmt, TFX_BUFFER_NONE);
 }
 
-int main(int argc, char **argv) {
-	demo_run(&run);
+void triangle_frame() {
+	const uint8_t back = 1;
+	tfx_set_vertices(&tri_res.vbo, 3);
+	tfx_set_state(0
+		| TFX_STATE_RGB_WRITE
+		| TFX_STATE_ALPHA_WRITE
+		| TFX_STATE_BLEND_ALPHA
+	);
+	tfx_submit(back, tri_res.prog, false);
+	tfx_frame();
+}
+
+void triangle_deinit() {
+	tfx_buffer_free(&tri_res.vbo);
+	// tfx_program_free(tri_res.prog); // NYI
 }

@@ -1,13 +1,11 @@
 #pragma once
 
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_opengl.h>
-#include <sys/signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <assert.h>
+#include <stdio.h>  // file stuff
+#include <stdlib.h> // malloc
+#include <math.h>
+#include "tinyfx.h"
 
-void *read_file(const char *filename) {
+void *demo_read_file(const char *filename) {
 	FILE *f = fopen(filename, "r");
 	if (f) {
 		fseek(f, 0L, SEEK_END);
@@ -24,113 +22,147 @@ void *read_file(const char *filename) {
 	return NULL;
 }
 
-typedef struct state_t {
-	uint16_t width;
-	uint16_t height;
-	SDL_Window     *window;
-	SDL_GLContext  context;
-	int alive;
-} state_t;
+tfx_transient_buffer demo_screen_triangle(float depth) {
+	tfx_vertex_format fmt = tfx_vertex_format_start();
+	tfx_vertex_format_add(&fmt, 0, 3, false, TFX_TYPE_FLOAT);
+	tfx_vertex_format_end(&fmt);
 
-static int demo_poll_events(state_t *state) {
-	SDL_Event event;
-	while (SDL_PollEvent(&event)) {
-		if (event.type == SDL_WINDOWEVENT
-			&& event.window.event == SDL_WINDOWEVENT_CLOSE
-		) {
-			return 0;
+	tfx_transient_buffer tb = tfx_transient_buffer_new(&fmt, 3);
+	float *fdata = (float*)tb.data;
+	fdata[0] = fdata[3] = fdata[4] = fdata[7] = -1.0f;
+	fdata[2] = fdata[5] = fdata[8] = depth;
+	fdata[1] = fdata[6] = 3.0f;
+	return tb;
+}
+
+// various useful math
+static float to_rad(const float deg) {
+	return deg * (3.14159265358979323846f / 180.0f);
+}
+
+void mat4_projection(float out[16], float fovy, float aspect, float near, float far, bool infinite) {
+	float t = tanf(to_rad(fovy) / 2.0f);
+	float m22 = infinite ? 1.0f : -(far + near) / (far - near);
+	float m23 = infinite ? 2.0f * near : -(2.0f * far * near) / (far - near);
+	float m32 = infinite ? -1.0f : -1.0f;
+	for (int i = 0; i < 16; i++) { out[i] = 0.0f; }
+	out[0] = 1.0f / (t * aspect);
+	out[5] = 1.0f / t;
+	out[10] = m22;
+	out[11] = m32;
+	out[14] = m23;
+}
+
+float vec_dot(const float *a, const float *b, int len) {
+	float sum = 0.0;
+	for (int i = 0; i < len; i++) {
+		sum += a[i] * b[i];
+	}
+	return sum;
+}
+
+float vec_len(const float *in, int len) {
+	return sqrtf(vec_dot(in, in, len));
+}
+
+void vec_norm(float *out, const float *in, int len) {
+	float vlen = vec_len(in, len);
+	if (vlen == 0.0f) {
+		for (int i = 0; i < len; i++) {
+			out[i] = 0.0f;
 		}
-		switch (event.type) {
-			case SDL_KEYDOWN:
-				if (event.key.keysym.sym == SDLK_ESCAPE) {
-					return 0;
-				}
-			default: break;
-		}
-	}
-	return 1;
-}
-void demo_end_frame(state_t *state) {
-	SDL_GL_SwapWindow(state->window);
-	state->alive = demo_poll_events(state);
-}
-
-
-static state_t *g_state = NULL;
-void sigh(int signo) {
-	if (signo == SIGINT) {
-		g_state->alive = 0;
-		puts("");
-	}
-
-	// Make *SURE* that SDL gives input back to the OS.
-	if (signo == SIGSEGV) {
-		SDL_Quit();
-	}
-}
-
-typedef void (APIENTRY *DEBUGPROC)(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, void* userParam);
-typedef void (APIENTRY *DEBUGMSG)(DEBUGPROC callback, const void* userParam);
-
-DEBUGMSG glDebugMessageCallback = 0;
-
-static void debug_spew(GLenum s, GLenum t, GLuint id, GLenum sev, GLsizei len, const GLchar *msg, void *p) {
-	if (sev == GL_DEBUG_SEVERITY_NOTIFICATION || sev == GL_DEBUG_SEVERITY_LOW) {
 		return;
 	}
-	printf("GL DEBUG: %s\n", msg);
+	vlen = 1.0f / vlen;
+	for (int i = 0; i < len; i++) {
+		out[i] = in[i] * vlen;
+	}
 }
 
-int demo_run(void (*runcb)(state_t*)) {
-	state_t state;
-	memset(&state, 0, sizeof(state_t));
-	state.alive = 1;
+void vec3_cross(float *out, const float *a, const float *b) {
+	out[0] = a[1] * b[2] - a[2] * b[1];
+	out[1] = a[2] * b[0] - a[0] * b[2];
+	out[2] = a[0] * b[1] - a[1] * b[0];
+}
 
-	g_state = &state;
+void mat4_lookat(float out[16], const float eye[3], const float at[3], const float up[3]) {
+	float forward[3] = { at[0] - eye[0], at[1] - eye[1], at[2] - eye[2] };
+	vec_norm(forward, forward, 3);
 
-	SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
-	state.window = SDL_CreateWindow(
-		"",
-		SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-		640, 480,
-		SDL_WINDOW_OPENGL
-	);
-	SDL_GL_SetAttribute(SDL_GL_RED_SIZE,    5);
-	SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE,  6);
-	SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE,   5);
-	SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE,  0);
-	SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 16);
+	float side[3];
+	vec3_cross(side, forward, up);
+	vec_norm(side, side, 3);
 
-	// So that desktops behave consistently with RPi
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
+	float new_up[3];
+	vec3_cross(new_up, side, forward);
 
-	state.context = SDL_GL_CreateContext(state.window);
-	SDL_GL_GetDrawableSize(
-		state.window,
-		(int*)&state.width,
-		(int*)&state.height
-	);
-	SDL_GL_MakeCurrent(state.window, state.context);
+	out[3] = out[7] = out[11] = 0.0f;
+	out[0] = side[0];
+	out[1] = new_up[0];
+	out[2] = -forward[0];
+	out[4] = side[1];
+	out[5] = new_up[1];
+	out[6] = -forward[1];
+	out[8] = side[2];
+	out[9] = new_up[2];
+	out[10] = -forward[2];
+	out[12] = -vec_dot(side, eye, 3);
+	out[13] = -vec_dot(new_up, eye, 3);
+	out[14] = vec_dot(forward, eye, 3);
+	out[15] = 1.0f;
+}
 
-	glDebugMessageCallback = (DEBUGMSG)SDL_GL_GetProcAddress("glDebugMessageCallback");
-	if (glDebugMessageCallback) {
-		puts("GL debug enabled");
-		glDebugMessageCallback(&debug_spew, NULL);
+void mat4_mul(float out[16], const float a[16], const float b[16]) {
+	out[0] = a[0]  * b[0] + a[1]  * b[4] + a[2]  * b[8]  + a[3]  * b[12];
+	out[1] = a[0]  * b[1] + a[1]  * b[5] + a[2]  * b[9]  + a[3]  * b[13];
+	out[2] = a[0]  * b[2] + a[1]  * b[6] + a[2]  * b[10] + a[3]  * b[14];
+	out[3] = a[0]  * b[3] + a[1]  * b[7] + a[2]  * b[11] + a[3]  * b[15];
+	out[4] = a[4]  * b[0] + a[5]  * b[4] + a[6]  * b[8]  + a[7]  * b[12];
+	out[5] = a[4]  * b[1] + a[5]  * b[5] + a[6]  * b[9]  + a[7]  * b[13];
+	out[6] = a[4]  * b[2] + a[5]  * b[6] + a[6]  * b[10] + a[7]  * b[14];
+	out[7] = a[4]  * b[3] + a[5]  * b[7] + a[6]  * b[11] + a[7]  * b[15];
+	out[8] = a[8]  * b[0] + a[9]  * b[4] + a[10] * b[8]  + a[11] * b[12];
+	out[9] = a[8]  * b[1] + a[9]  * b[5] + a[10] * b[9]  + a[11] * b[13];
+	out[10] = a[8]  * b[2] + a[9]  * b[6] + a[10] * b[10] + a[11] * b[14];
+	out[11] = a[8]  * b[3] + a[9]  * b[7] + a[10] * b[11] + a[11] * b[15];
+	out[12] = a[12] * b[0] + a[13] * b[4] + a[14] * b[8]  + a[15] * b[12];
+	out[13] = a[12] * b[1] + a[13] * b[5] + a[14] * b[9]  + a[15] * b[13];
+	out[14] = a[12] * b[2] + a[13] * b[6] + a[14] * b[10] + a[15] * b[14];
+	out[15] = a[12] * b[3] + a[13] * b[7] + a[14] * b[11] + a[15] * b[15];
+}
+
+void mat4_invert(float out[16], const float a[16]) {
+	float tmp[16];
+	tmp[0]  =  a[5] * a[10] * a[15] - a[5] * a[11] * a[14] - a[9] * a[6] * a[15] + a[9] * a[7] * a[14] + a[13] * a[6] * a[11] - a[13] * a[7] * a[10];
+	tmp[1]  = -a[1] * a[10] * a[15] + a[1] * a[11] * a[14] + a[9] * a[2] * a[15] - a[9] * a[3] * a[14] - a[13] * a[2] * a[11] + a[13] * a[3] * a[10];
+	tmp[2]  =  a[1] * a[6]  * a[15] - a[1] * a[7]  * a[14] - a[5] * a[2] * a[15] + a[5] * a[3] * a[14] + a[13] * a[2] * a[7]  - a[13] * a[3] * a[6];
+	tmp[3]  = -a[1] * a[6]  * a[11] + a[1] * a[7]  * a[10] + a[5] * a[2] * a[11] - a[5] * a[3] * a[10] - a[9]  * a[2] * a[7]  + a[9]  * a[3] * a[6];
+	tmp[4]  = -a[4] * a[10] * a[15] + a[4] * a[11] * a[14] + a[8] * a[6] * a[15] - a[8] * a[7] * a[14] - a[12] * a[6] * a[11] + a[12] * a[7] * a[10];
+	tmp[5]  =  a[0] * a[10] * a[15] - a[0] * a[11] * a[14] - a[8] * a[2] * a[15] + a[8] * a[3] * a[14] + a[12] * a[2] * a[11] - a[12] * a[3] * a[10];
+	tmp[6]  = -a[0] * a[6]  * a[15] + a[0] * a[7]  * a[14] + a[4] * a[2] * a[15] - a[4] * a[3] * a[14] - a[12] * a[2] * a[7]  + a[12] * a[3] * a[6];
+	tmp[7]  =  a[0] * a[6]  * a[11] - a[0] * a[7]  * a[10] - a[4] * a[2] * a[11] + a[4] * a[3] * a[10] + a[8]  * a[2] * a[7]  - a[8]  * a[3] * a[6];
+	tmp[8]  =  a[4] * a[9]  * a[15] - a[4] * a[11] * a[13] - a[8] * a[5] * a[15] + a[8] * a[7] * a[13] + a[12] * a[5] * a[11] - a[12] * a[7] * a[9];
+	tmp[9]  = -a[0] * a[9]  * a[15] + a[0] * a[11] * a[13] + a[8] * a[1] * a[15] - a[8] * a[3] * a[13] - a[12] * a[1] * a[11] + a[12] * a[3] * a[9];
+	tmp[10] =  a[0] * a[5]  * a[15] - a[0] * a[7]  * a[13] - a[4] * a[1] * a[15] + a[4] * a[3] * a[13] + a[12] * a[1] * a[7]  - a[12] * a[3] * a[5];
+	tmp[11] = -a[0] * a[5]  * a[11] + a[0] * a[7]  * a[9]  + a[4] * a[1] * a[11] - a[4] * a[3] * a[9]  - a[8]  * a[1] * a[7]  + a[8]  * a[3] * a[5];
+	tmp[12] = -a[4] * a[9]  * a[14] + a[4] * a[10] * a[13] + a[8] * a[5] * a[14] - a[8] * a[6] * a[13] - a[12] * a[5] * a[10] + a[12] * a[6] * a[9];
+	tmp[13] =  a[0] * a[9]  * a[14] - a[0] * a[10] * a[13] - a[8] * a[1] * a[14] + a[8] * a[2] * a[13] + a[12] * a[1] * a[10] - a[12] * a[2] * a[9];
+	tmp[14] = -a[0] * a[5]  * a[14] + a[0] * a[6]  * a[13] + a[4] * a[1] * a[14] - a[4] * a[2] * a[13] - a[12] * a[1] * a[6]  + a[12] * a[2] * a[5];
+	tmp[15] =  a[0] * a[5]  * a[10] - a[0] * a[6]  * a[9]  - a[4] * a[1] * a[10] + a[4] * a[2] * a[9]  + a[8]  * a[1] * a[6]  - a[8]  * a[2] * a[5];
+
+	float det = a[0] * tmp[0] + a[1] * tmp[4] + a[2] * tmp[8] + a[3] * tmp[12];
+	if (det == 0.0f) {
+		for (int i = 0; i < 16; i++) {
+			out[i] = a[i];
+		}
 	}
+	det = 1.0f / det;
 
-	printf("Display resolution: %dx%d\n", state.width, state.height);
+	for (int i = 0; i < 16; i++) {
+		out[i] = tmp[i] * det;
+	}
+}
 
-	SDL_SetRelativeMouseMode(1);
-	SDL_GL_SetSwapInterval(1);
-
-	assert(signal(SIGINT, sigh) != SIG_ERR);
-
-	runcb(&state);
-
-	SDL_Quit();
-
-	return 0;
+float clamp(float v, float low, float high) {
+	return fmaxf(fminf(v, high), low);
 }

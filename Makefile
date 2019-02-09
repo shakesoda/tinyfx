@@ -3,8 +3,8 @@ OUTPUT  =tinyfx
 SHUTUP  =-Wno-pointer-to-int-cast -Wno-unused-function -Wno-unused-but-set-variable -Wno-unused-value
 CFLAGS  =-fPIC -Wall -Wno-deprecated-declarations -ftree-vectorize -pipe -Wno-psabi $(SHUTUP) -I. -ggdb
 LDFLAGS = -lpthread -lrt -ldl -lm
-EXAMPLES = examples/01-triangle.c
-SOURCES = tinyfx.c $(EXAMPLES)
+DEMO = examples/demo.c
+SOURCES = tinyfx.c $(DEMO)
 OBJECTS = $(SOURCES:.c=.o)
 
 # yes, make, use my damn cores.
