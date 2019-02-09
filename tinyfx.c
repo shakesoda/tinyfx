@@ -2735,7 +2735,8 @@ tfx_stats tfx_frame() {
 							case GL_DEPTH_COMPONENT32: fmt = GL_R32F; break;
 							default: break;
 						}
-						CHECK(tfx_glBindImageTexture(j, tex->gl_ids[tex->gl_idx], job.textures_mip[j], false, 0, write ? GL_WRITE_ONLY : GL_READ_ONLY, fmt));
+						bool cube = (tex->flags & TFX_TEXTURE_CUBE) == TFX_TEXTURE_CUBE;
+						CHECK(tfx_glBindImageTexture(j, tex->gl_ids[tex->gl_idx], job.textures_mip[j], cube, 0, write ? GL_WRITE_ONLY : GL_READ_ONLY, fmt));
 					}
 					if (job.ssbos[j].gl_id != 0) {
 						tfx_buffer *ssbo = &job.ssbos[j];
