@@ -42,8 +42,8 @@ extern "C" {
 #pragma warning( disable : 4996 )
 #endif
 
-#ifndef TFX_UNIFORM_BUFFER_COUNT
-#define TFX_UNIFORM_BUFFER_COUNT 3
+#ifndef TFX_TRANSIENT_BUFFER_COUNT
+#define TFX_TRANSIENT_BUFFER_COUNT 3
 #endif
 
 #ifndef TFX_UNIFORM_BUFFER_SIZE
@@ -844,7 +844,7 @@ void swap_state_buffer() {
 static struct {
 	uint8_t *data;
 	uint32_t offset;
-	tfx_buffer buffers[TFX_UNIFORM_BUFFER_COUNT];
+	tfx_buffer buffers[TFX_TRANSIENT_BUFFER_COUNT];
 } g_transient_buffer;
 
 static tfx_caps g_caps;
@@ -862,7 +862,7 @@ static void basic_log(const char *msg, tfx_severity level) {
 static void tvb_reset() {
 	g_transient_buffer.offset = 0;
 
-	for (int i = 0; i < TFX_UNIFORM_BUFFER_COUNT; i++) {
+	for (int i = 0; i < TFX_TRANSIENT_BUFFER_COUNT; i++) {
 		if (!g_transient_buffer.buffers[i].gl_id) {
 			GLuint id;
 			CHECK(tfx_glGenBuffers(1, &id));
@@ -1044,7 +1044,7 @@ void tfx_shutdown() {
 	free(g_transient_buffer.data);
 	g_transient_buffer.data = NULL;
 
-	for (int i = 0; i < TFX_UNIFORM_BUFFER_COUNT; i++) {
+	for (int i = 0; i < TFX_TRANSIENT_BUFFER_COUNT; i++) {
 		if (g_transient_buffer.buffers[i].gl_id) {
 			tfx_glDeleteBuffers(1, &g_transient_buffer.buffers[i].gl_id);
 		}
@@ -3236,10 +3236,10 @@ tfx_stats tfx_frame() {
 
 	// shift buffers to avoid stalls
 	tfx_buffer tmp = g_transient_buffer.buffers[0];
-	for (int i = 0; i < TFX_UNIFORM_BUFFER_COUNT - 1; i++) {
+	for (int i = 0; i < TFX_TRANSIENT_BUFFER_COUNT - 1; i++) {
 		g_transient_buffer.buffers[i] = g_transient_buffer.buffers[i+1];
 	}
-	g_transient_buffer.buffers[TFX_UNIFORM_BUFFER_COUNT-1] = tmp;
+	g_transient_buffer.buffers[TFX_TRANSIENT_BUFFER_COUNT-1] = tmp;
 
 	return stats;
 }
