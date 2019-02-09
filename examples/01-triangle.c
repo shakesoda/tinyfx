@@ -50,7 +50,7 @@ static void run(state_t *state) {
 	tfx_vertex_format_add(&fmt, 1, 4, true, TFX_TYPE_FLOAT);
 	tfx_vertex_format_end(&fmt);
 
-	tfx_buffer vbo = tfx_buffer_new(verts, sizeof(verts), &fmt, TFX_USAGE_STATIC);
+	tfx_buffer vbo = tfx_buffer_new(verts, sizeof(verts), &fmt, TFX_BUFFER_NONE);
 
 	while (state->alive) {
 		tfx_touch(back);

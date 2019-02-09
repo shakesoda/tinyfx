@@ -269,6 +269,7 @@ static tfx_glext available_exts[] = {
 	{ "GL_ARB_instanced_arrays", false },
 	{ "GL_ARB_seamless_cube_map", false },
 	{ "GL_EXT_texture_filter_anisotropic", false },
+	{ "GL_ARB_multi_bind", false },
 	// TODO
 	// GL_AMD_vertex_shader_layer
 	// GL_AMD_vertex_shader_viewport_index
@@ -584,6 +585,7 @@ tfx_caps tfx_get_caps() {
 	bool gl32 = g_platform_data.context_version >= 32 && !g_platform_data.use_gles;
 	bool gl33 = g_platform_data.context_version >= 33 && !g_platform_data.use_gles;
 	bool gl43 = g_platform_data.context_version >= 43 && !g_platform_data.use_gles;
+	bool gl44 = g_platform_data.context_version >= 44 && !g_platform_data.use_gles;
 	bool gl46 = g_platform_data.context_version >= 46 && !g_platform_data.use_gles;
 	bool gles30 = g_platform_data.context_version >= 30 && g_platform_data.use_gles;
 	bool gles31 = g_platform_data.context_version >= 31 && g_platform_data.use_gles;
@@ -597,6 +599,7 @@ tfx_caps tfx_get_caps() {
 	caps.instancing = available_exts[7].supported || gl33 || gles30;
 	caps.seamless_cubemap = available_exts[8].supported || gl32;
 	caps.anisotropic_filtering = available_exts[9].supported || gl46;
+	caps.multibind = available_exts[10].supported || gl44;
 
 	return caps;
 }
@@ -1075,16 +1078,19 @@ void tfx_shutdown() {
 }
 
 static bool g_shaderc_allocated = false;
+static int stack_depth = 0;
 
 static void push_group(unsigned id, const char *label) {
 	if (tfx_glPushDebugGroup) {
 		CHECK(tfx_glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, id, strlen(label), label));
+		stack_depth += 1;
 	}
 }
 
 static void pop_group() {
-	if (tfx_glPopDebugGroup) {
+	if (tfx_glPopDebugGroup && stack_depth > 0) {
 		CHECK(tfx_glPopDebugGroup());
+		stack_depth -= 1;
 	}
 }
 
@@ -2884,7 +2890,6 @@ tfx_stats tfx_frame() {
 		if ((view->flags & TFXI_VIEW_INVALIDATE) == TFXI_VIEW_INVALIDATE && tfx_glInvalidateFramebuffer) {
 			int offset = 0;
 			GLenum attachments[8];
-			bool clear_depth = false;
 			for (unsigned i = 0; i < canvas->allocated; i++) {
 				tfx_texture *attachment = &canvas->attachments[i];
 				if (attachment->is_depth) {
@@ -3119,7 +3124,7 @@ tfx_stats tfx_frame() {
 				GLuint idx = msaa_sample ? 1 : tex->gl_idx;
 				GLuint id = tex->gl_ids[idx];
 				bind_units[i] = id;
-				if (!tfx_glBindTextures && id > 0) {
+				if (!g_caps.multibind && id > 0) {
 					CHECK(tfx_glActiveTexture(GL_TEXTURE0 + i));
 
 					bool cube = (tex->flags & TFX_TEXTURE_CUBE) == TFX_TEXTURE_CUBE;
@@ -3134,7 +3139,7 @@ tfx_stats tfx_frame() {
 					CHECK(tfx_glBindTexture(fmt, id));
 				}
 			}
-			if (tfx_glBindTextures) {
+			if (g_caps.multibind) {
 				CHECK(tfx_glBindTextures(0, 8, bind_units));
 			}
 

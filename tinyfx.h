@@ -275,6 +275,7 @@ typedef struct tfx_caps {
 	bool instancing;
 	bool seamless_cubemap;
 	bool anisotropic_filtering;
+	bool multibind;
 } tfx_caps;
 
 // TODO
