@@ -42,6 +42,10 @@ extern "C" {
 #pragma warning( disable : 4996 )
 #endif
 
+#ifndef TFX_UNIFORM_BUFFER_COUNT
+#define TFX_UNIFORM_BUFFER_COUNT 3
+#endif
+
 #ifndef TFX_UNIFORM_BUFFER_SIZE
 // by default, allow up to 4MB of uniform updates per frame.
 #define TFX_UNIFORM_BUFFER_SIZE 1024*1024*4
@@ -840,7 +844,7 @@ void swap_state_buffer() {
 static struct {
 	uint8_t *data;
 	uint32_t offset;
-	tfx_buffer buf;
+	tfx_buffer buffers[TFX_UNIFORM_BUFFER_COUNT];
 } g_transient_buffer;
 
 static tfx_caps g_caps;
@@ -858,12 +862,14 @@ static void basic_log(const char *msg, tfx_severity level) {
 static void tvb_reset() {
 	g_transient_buffer.offset = 0;
 
-	if (!g_transient_buffer.buf.gl_id) {
-		GLuint id;
-		CHECK(tfx_glGenBuffers(1, &id));
-		CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, id));
-		CHECK(tfx_glBufferData(GL_ARRAY_BUFFER, TFX_TRANSIENT_BUFFER_SIZE, NULL, GL_DYNAMIC_DRAW));
-		g_transient_buffer.buf.gl_id = id;
+	for (int i = 0; i < TFX_UNIFORM_BUFFER_COUNT; i++) {
+		if (!g_transient_buffer.buffers[i].gl_id) {
+			GLuint id;
+			CHECK(tfx_glGenBuffers(1, &id));
+			CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, id));
+			CHECK(tfx_glBufferData(GL_ARRAY_BUFFER, TFX_TRANSIENT_BUFFER_SIZE, NULL, GL_DYNAMIC_DRAW));
+			g_transient_buffer.buffers[i].gl_id = id;
+		}
 	}
 }
 
@@ -1038,8 +1044,10 @@ void tfx_shutdown() {
 	free(g_transient_buffer.data);
 	g_transient_buffer.data = NULL;
 
-	if (g_transient_buffer.buf.gl_id) {
-		tfx_glDeleteBuffers(1, &g_transient_buffer.buf.gl_id);
+	for (int i = 0; i < TFX_UNIFORM_BUFFER_COUNT; i++) {
+		if (g_transient_buffer.buffers[i].gl_id) {
+			tfx_glDeleteBuffers(1, &g_transient_buffer.buffers[i].gl_id);
+		}
 	}
 
 	if (g_back.uniform_map) {
@@ -2279,7 +2287,7 @@ void tfx_set_image(tfx_uniform *uniform, tfx_texture *tex, uint8_t slot, uint8_t
 // TODO: make this work for index buffers
 void tfx_set_transient_buffer(tfx_transient_buffer tb) {
 	assert(tb.has_format);
-	g_tmp_draw.vbo = g_transient_buffer.buf;
+	g_tmp_draw.vbo = g_transient_buffer.buffers[0];
 	g_tmp_draw.use_vbo = true;
 	g_tmp_draw.use_tvb = true;
 	g_tmp_draw.tvb_fmt = tb.format;
@@ -2508,7 +2516,7 @@ tfx_stats tfx_frame() {
 	push_group(debug_id++, "Update Resources");
 
 	if (g_transient_buffer.offset > 0) {
-		CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, g_transient_buffer.buf.gl_id));
+		CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, g_transient_buffer.buffers[0].gl_id));
 		if (tfx_glMapBufferRange && tfx_glUnmapBuffer) {
 			void *ptr = tfx_glMapBufferRange(GL_ARRAY_BUFFER, 0, g_transient_buffer.offset, GL_MAP_WRITE_BIT);
 			if (ptr) {
@@ -3225,6 +3233,13 @@ tfx_stats tfx_frame() {
 	if (tfx_glDeleteVertexArrays) {
 		CHECK(tfx_glDeleteVertexArrays(1, &vao));
 	}
+
+	// shift buffers to avoid stalls
+	tfx_buffer tmp = g_transient_buffer.buffers[0];
+	for (int i = 0; i < TFX_UNIFORM_BUFFER_COUNT - 1; i++) {
+		g_transient_buffer.buffers[i] = g_transient_buffer.buffers[i+1];
+	}
+	g_transient_buffer.buffers[TFX_UNIFORM_BUFFER_COUNT-1] = tmp;
 
 	return stats;
 }
