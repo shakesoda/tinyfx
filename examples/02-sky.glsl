@@ -1,21 +1,13 @@
 #ifdef VERTEX
-// v_position was bound to attribute index 0 and vertexColor was bound to attribute index 1
 in vec3 v_position;
 
 out vec3 f_position;
-out float f_depth;
 
 uniform mat4 u_world_from_screen;
 
 void main() {
-	//.xyww will force w/w to put the sky verts at max depth.
-	//gl_Position = (vec4(v_position, 1.0) * mvpMatrix).xyww;
-	//f_position = vec3(vec4(normalize(v_position), 0.0)).xyz;
-	gl_Position = vec4(v_position.xyz, 1.0);
-	f_depth = gl_Position.z;
-
-	float norm_depth = f_depth * 2.0 - 1.0;
-	f_position = mat3(u_world_from_screen) * vec3(v_position.x, v_position.y, norm_depth);
+	gl_Position = vec4(v_position.xy, 2.0 * step(0.5, v_position.z) - 1.0, 1.0);
+	f_position = mat3(u_world_from_screen) * vec3(v_position.x, v_position.y, gl_Position.z);
 }
 #endif
 
@@ -23,7 +15,6 @@ void main() {
 precision highp float;
 
 in vec3 f_position;
-in float f_depth;
 
 uniform vec4 u_sun_params;
 const bool u_tonemap = true;
@@ -172,9 +163,6 @@ void main() {
 	retColor = mix(retColor * 0.75, retColor, clamp(dot(direction, up) * 0.5 + 0.5, 0.0, 1.0));
 
 	vec3 final = pow(retColor * 0.75, vec3(2.2));
-	
-	// fixes depth writing problems if you have them, but expensive
-	// gl_FragDepth = step(0.5, f_depth);
 
 	// if (!u_tonemap) {
 	// 	gl_FragColor = vec4(final, 1.0);

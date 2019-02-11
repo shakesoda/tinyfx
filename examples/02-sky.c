@@ -39,7 +39,7 @@ void sky_frame(int mx, int my) {
 	sky_res.yaw   -= mx;
 
 	const float sensitivity = 0.1f;
-	const float limit = 3.1415962 * 0.5;
+	const float limit = 3.1415962f * 0.5f;
 	const float pitch = clamp(to_rad((float)sky_res.pitch * sensitivity), -limit, limit);
 	const float yaw   = to_rad((float)sky_res.yaw * sensitivity);
 
