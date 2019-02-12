@@ -1587,6 +1587,11 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 			params->internal_format = GL_RGBA16F;
 			params->type = GL_FLOAT;
 			break;
+		case TFX_FORMAT_R16F:
+			params->format = GL_RED;
+			params->internal_format = GL_R16F;
+			params->type = GL_FLOAT;
+			break;
 		case TFX_FORMAT_R32F:
 			params->format = GL_RED;
 			params->internal_format = GL_R32F;

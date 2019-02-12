@@ -123,6 +123,7 @@ typedef enum tfx_format {
 	// TFX_FORMAT_RGBA16F_D16,
 
 	// single channel
+	TFX_FORMAT_R16F,
 	TFX_FORMAT_R32UI,
 	TFX_FORMAT_R32F,
 
