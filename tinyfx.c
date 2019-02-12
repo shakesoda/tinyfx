@@ -1943,6 +1943,7 @@ tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format, uint16_t fl
 
 	switch (format) {
 		// just data
+		case TFX_FORMAT_R16F:
 		case TFX_FORMAT_R32F:
 		case TFX_FORMAT_RG16F:
 		case TFX_FORMAT_RG32F:
