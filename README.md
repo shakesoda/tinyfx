@@ -28,9 +28,11 @@ BGFX is excellent, but we have different priorities and scope.
 ## Examples
 
 Hello Triangle (`examples/01-triangle.c`)
+
 ![](https://github.com/shakesoda/tinyfx/raw/master/examples/01-triangle.png)
 
 Sky + Camera (`examples/02-sky.c`)
+
 ![](https://github.com/shakesoda/tinyfx/raw/master/examples/02-sky.png)
 
 <!-- Hello C++ (`examples/hello_cpp.cpp) -->
