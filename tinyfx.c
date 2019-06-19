@@ -22,6 +22,9 @@ extern "C" {
 // TODO: look into just keeping the stuff from GL header in here, this thing
 // isn't included on many systems and is kind of annoying to always need.
 #include <GL/glcorearb.h>
+//#ifdef __ANDROID__
+//#include <GLES3/gl32.h>
+//#endif
 #include <math.h>
 #include <stdarg.h>
 #include <string.h>
@@ -951,6 +954,7 @@ void tfx_reset(uint16_t width, uint16_t height, tfx_reset_flags flags) {
 	}
 
 	memset(&g_backbuffer, 0, sizeof(tfx_canvas));
+	//g_backbuffer.gl_fbo = g_platform_data.backbuffer_fbo;
 	g_backbuffer.allocated = 1;
 	g_backbuffer.width = width;
 	g_backbuffer.height = height;
@@ -1417,7 +1421,7 @@ void tfx_vertex_format_end(tfx_vertex_format *fmt) {
 	fmt->stride = stride;
 }
 
-tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tfx_buffer_flags flags) {
+tfx_buffer tfx_buffer_new(const void *data, size_t size, tfx_vertex_format *format, tfx_buffer_flags flags) {
 	GLenum gl_usage = GL_STATIC_DRAW;
 	switch (flags) {
 		case TFX_BUFFER_MUTABLE: gl_usage = GL_DYNAMIC_DRAW; break;
@@ -1452,7 +1456,7 @@ tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tf
 typedef struct tfx_buffer_params {
 	uint32_t offset;
 	uint32_t size;
-	void *update_data;
+	const void *update_data;
 } tfx_buffer_params;
 
 static tfx_buffer *get_internal_buffer(tfx_buffer *buf) {
@@ -1465,7 +1469,7 @@ static tfx_buffer *get_internal_buffer(tfx_buffer *buf) {
 	return NULL;
 }
 
-void tfx_buffer_update(tfx_buffer *buf, void *data, uint32_t offset, uint32_t size) {
+void tfx_buffer_update(tfx_buffer *buf, const void *data, uint32_t offset, uint32_t size) {
 	assert(buf != NULL);
 	assert((buf->flags & TFX_BUFFER_MUTABLE) == TFX_BUFFER_MUTABLE);
 	assert(size > 0);
@@ -1501,10 +1505,10 @@ typedef struct tfx_texture_params {
 	GLenum format;
 	GLenum internal_format;
 	GLenum type;
-	void *update_data;
+	const void *update_data;
 } tfx_texture_params;
 
-tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data, tfx_format format, uint16_t flags) {
+tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, const void *data, tfx_format format, uint16_t flags) {
 	tfx_texture t;
 	memset(&t, 0, sizeof(tfx_texture));
 
@@ -1718,9 +1722,12 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 		if (depth && !reserve_mips) {
 			CHECK(tfx_glTexParameteri(mode, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE));
 
-			// note: GL 3.3
+			// note: GL 3.3, ES 3.0+. combined swizzle isn't in gles.
 			GLint swizzleMask[] = { GL_RED, GL_RED, GL_RED, GL_ONE };
-			CHECK(tfx_glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzleMask));
+			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, swizzleMask[0]));
+			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, swizzleMask[1]));
+			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, swizzleMask[2]));
+			CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, swizzleMask[3]));
 		}
 		CHECK(tfx_glPixelStorei(GL_UNPACK_ALIGNMENT, 1));
 
@@ -1767,7 +1774,7 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data,
 	return t;
 }
 
-void tfx_texture_update(tfx_texture *tex, void *data) {
+void tfx_texture_update(tfx_texture *tex, const void *data) {
 	assert((tex->flags & TFX_TEXTURE_CPU_WRITABLE) == TFX_TEXTURE_CPU_WRITABLE);
 	tfx_texture_params *internal = tex->internal;
 	internal->update_data = data;
@@ -1934,6 +1941,18 @@ void tfx_canvas_free(tfx_canvas *c) {
 tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format, uint16_t flags) {
 	tfx_texture attachments[2];
 	int n = 0;
+
+	if ((flags & TFX_TEXTURE_EXTERNAL) == TFX_TEXTURE_EXTERNAL) {
+		tfx_canvas c;
+		memset(&c, 0, sizeof(tfx_canvas));
+		c.allocated = 0;
+		c.own_attachments = false;
+		c.width = w;
+		c.height = h;
+		c.current_height = h;
+		c.current_width = w;
+		return c;
+	}
 
 	bool has_color = false;
 	bool has_depth = false;
@@ -2901,6 +2920,7 @@ tfx_stats tfx_frame() {
 		}
 
 		GLuint mask = 0;
+		// BUG: this will invalidate at the wrong time, needs to happen at end of pass.
 		if ((view->flags & TFXI_VIEW_INVALIDATE) == TFXI_VIEW_INVALIDATE && tfx_glInvalidateFramebuffer) {
 			int offset = 0;
 			GLenum attachments[8];

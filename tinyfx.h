@@ -82,7 +82,8 @@ enum {
 	TFX_TEXTURE_CUBE = 1 << 7,
 	TFX_TEXTURE_MSAA_SAMPLE = 1 << 8,
 	TFX_TEXTURE_MSAA_X2 = 1 << 9,
-	TFX_TEXTURE_MSAA_X4 = 1 << 10
+	TFX_TEXTURE_MSAA_X4 = 1 << 10,
+	TFX_TEXTURE_EXTERNAL = 1 << 11
 };
 
 typedef enum tfx_reset_flags {
@@ -298,12 +299,12 @@ TFX_API size_t tfx_vertex_format_offset(tfx_vertex_format *fmt, uint8_t slot);
 TFX_API uint32_t tfx_transient_buffer_get_available(tfx_vertex_format *fmt);
 TFX_API tfx_transient_buffer tfx_transient_buffer_new(tfx_vertex_format *fmt, uint16_t num_verts);
 
-TFX_API tfx_buffer tfx_buffer_new(void *data, size_t size, tfx_vertex_format *format, tfx_buffer_flags flags);
-TFX_API void tfx_buffer_update(tfx_buffer *buf, void *data, uint32_t offset, uint32_t size);
+TFX_API tfx_buffer tfx_buffer_new(const void *data, size_t size, tfx_vertex_format *format, tfx_buffer_flags flags);
+TFX_API void tfx_buffer_update(tfx_buffer *buf, const void *data, uint32_t offset, uint32_t size);
 TFX_API void tfx_buffer_free(tfx_buffer *buf);
 
-TFX_API tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, void *data, tfx_format format, uint16_t flags);
-TFX_API void tfx_texture_update(tfx_texture *tex, void *data);
+TFX_API tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, const void *data, tfx_format format, uint16_t flags);
+TFX_API void tfx_texture_update(tfx_texture *tex, const void *data);
 TFX_API void tfx_texture_free(tfx_texture *tex);
 TFX_API tfx_texture tfx_get_texture(tfx_canvas *canvas, uint8_t index);
 
