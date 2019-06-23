@@ -165,7 +165,8 @@ enum {
 	TFXI_VIEW_SCISSOR         = 1 << 5,
 
 	TFXI_VIEW_INVALIDATE      = 1 << 6,
-	TFXI_VIEW_SORT_SEQUENTIAL = 1 << 7
+	TFXI_VIEW_FLUSH           = 1 << 7,
+	TFXI_VIEW_SORT_SEQUENTIAL = 1 << 8
 };
 
 typedef struct tfx_rect {
@@ -299,6 +300,7 @@ static tfx_glext available_exts[] = {
 	{ NULL, false }
 };
 
+PFNGLFLUSHPROC tfx_glFlush;
 PFNGLGETSTRINGPROC tfx_glGetString;
 PFNGLGETSTRINGIPROC tfx_glGetStringi;
 PFNGLGETERRORPROC tfx_glGetError;
@@ -406,6 +408,7 @@ PFNGLPOPDEBUGGROUPPROC tfx_glPopDebugGroup;
 PFNGLINSERTEVENTMARKEREXTPROC tfx_glInsertEventMarkerEXT;
 
 void load_em_up(void* (*get_proc_address)(const char*)) {
+	tfx_glFlush = get_proc_address("glFlush");
 	tfx_glGetString = get_proc_address("glGetString");
 	tfx_glGetStringi = get_proc_address("glGetStringi");
 	tfx_glGetError = get_proc_address("glGetError");
@@ -1542,6 +1545,8 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, const void 
 	tfx_texture_params *params = calloc(1, sizeof(tfx_texture_params));
 	params->update_data = NULL;
 
+	// TODO: add some stencil formats (i.e. D24S8)
+	bool stencil = false;
 	bool depth = false;
 	switch (format) {
 		// integer formats
@@ -1644,6 +1649,7 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, const void 
 			assert(false);
 			break;
 	}
+	t.is_stencil = stencil;
 	t.is_depth = depth;
 	t.internal = params;
 
@@ -1803,6 +1809,7 @@ bool canvas_reconfigure(tfx_canvas *c, bool msaa) {
 	int offset = 0;
 	for (unsigned i = 0; i < c->allocated; i++) {
 		GLenum attach = GL_COLOR_ATTACHMENT0 + offset;
+		// TODO: depth stencil
 		if (c->attachments[i].is_depth) {
 			assert(!found_depth); // two depth buffers, bail
 			attach = GL_DEPTH_ATTACHMENT;
@@ -1908,7 +1915,13 @@ tfx_canvas tfx_canvas_attachments_new(bool claim_attachments, int count, tfx_tex
 		// sanity checking was already done by canvas_reconfigure, no need here.
 		for (unsigned i = 0; i < c.allocated; i++) {
 			GLenum attach = GL_COLOR_ATTACHMENT0 + offset;
-			if (c.attachments[i].is_depth) {
+			if (c.attachments[i].is_depth && c.attachments[i].is_stencil) {
+				attach = GL_DEPTH_STENCIL_ATTACHMENT;
+			}
+			else if (c.attachments[i].is_stencil) {
+				attach = GL_STENCIL_ATTACHMENT;
+			}
+			else if (c.attachments[i].is_depth) {
 				attach = GL_DEPTH_ATTACHMENT;
 			}
 			else {
@@ -2091,6 +2104,9 @@ void tfx_view_set_flags(uint8_t id, tfx_view_flags flags) {
 #define FLAG(flags, mask) ((flags & mask) == mask)
 	if (FLAG(flags, TFX_VIEW_INVALIDATE)) {
 		view->flags |= TFXI_VIEW_INVALIDATE;
+	}
+	if (FLAG(flags, TFX_VIEW_FLUSH)) {
+		view->flags |= TFXI_VIEW_FLUSH;
 	}
 	// NYI
 	if (FLAG(flags, TFX_VIEW_SORT_SEQUENTIAL)) {
@@ -2451,10 +2467,14 @@ void tfx_blit(uint8_t dst, uint8_t src, uint16_t x, uint16_t y, uint16_t w, uint
 
 	for (unsigned i = 0; i < canvas->allocated; i++) {
 		tfx_texture *attach = &canvas->attachments[i];
+		if (attach->is_stencil) {
+			blit.mask |= GL_STENCIL_BUFFER_BIT;
+		}
 		if (attach->is_depth) {
 			blit.mask |= GL_DEPTH_BUFFER_BIT;
 		}
-		else {
+		// there aren't any combined color+depth or stencil
+		if (!attach->is_depth && !attach->is_stencil) {
 			blit.mask |= GL_COLOR_BUFFER_BIT;
 		}
 	}
@@ -2656,6 +2676,36 @@ tfx_stats tfx_frame() {
 		tfx_canvas *canvas = get_canvas(view);
 
 		bool canvas_changed = last_canvas && canvas != last_canvas && last_canvas->gl_fbo[0] != canvas->gl_fbo[0];
+
+		// invalidate before switching canvas, if needed.
+		if (canvas_changed) {
+			if ((view->flags & TFXI_VIEW_INVALIDATE) == TFXI_VIEW_INVALIDATE && tfx_glInvalidateFramebuffer) {
+				int offset = 0;
+				GLenum attachments[8];
+				for (unsigned i = 0; i < canvas->allocated; i++) {
+					tfx_texture *attachment = &canvas->attachments[i];
+					if (attachment->is_stencil && attachment->is_depth) {
+						attachments[i] = GL_DEPTH_STENCIL_ATTACHMENT;
+					}
+					else if (attachment->is_stencil) {
+						attachments[i] = GL_STENCIL_ATTACHMENT;
+					}
+					else if (attachment->is_depth) {
+						attachments[i] = GL_DEPTH_ATTACHMENT;
+					}
+					else {
+						attachments[i] = GL_COLOR_ATTACHMENT0 + offset;
+						offset += 1;
+					}
+				}
+				CHECK(tfx_glInvalidateFramebuffer(GL_FRAMEBUFFER, canvas->allocated, attachments));
+			}
+		}
+
+		if ((view->flags & TFXI_VIEW_FLUSH) == TFXI_VIEW_FLUSH) {
+			CHECK(tfx_glFlush());
+		}
+
 		int last_mip = (last_canvas && last_canvas->current_mip) ? last_canvas->current_mip : 0;
 		bool reset_mip = canvas_changed && last_mip != 0;
 		bool mip_changed = reset_mip || last_mip != view->canvas_layer;
@@ -2669,7 +2719,13 @@ tfx_stats tfx_frame() {
 				CHECK(tfx_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, attachment->mip_count-1));
 
 				GLenum attach = GL_DEPTH_ATTACHMENT;
-				if (!attachment->is_depth) {
+				if (attachment->is_stencil && attachment->is_depth) {
+					attach = GL_DEPTH_STENCIL_ATTACHMENT;
+				}
+				else if (attachment->is_stencil) {
+					attach = GL_STENCIL_ATTACHMENT;
+				}
+				else if (!attachment->is_depth && !attachment->is_stencil) {
 					attach = GL_COLOR_ATTACHMENT0 + offset;
 					offset += 1;
 				}
@@ -2689,10 +2745,13 @@ tfx_stats tfx_frame() {
 			GLenum mask = 0;
 			for (unsigned i = 0; i < last_canvas->allocated; i++) {
 				tfx_texture *attach = &last_canvas->attachments[i];
+				if (attach->is_stencil) {
+					mask |= GL_STENCIL_BUFFER_BIT;
+				}
 				if (attach->is_depth) {
 					mask |= GL_DEPTH_BUFFER_BIT;
 				}
-				else {
+				if (!attach->is_depth && !attach->is_stencil) {
 					mask |= GL_COLOR_BUFFER_BIT;
 				}
 			}
@@ -2713,7 +2772,7 @@ tfx_stats tfx_frame() {
 				tfx_canvas *src = blit->source;
 				if (tfx_glCopyImageSubData) {
 					int argh = 0;
-					if (canvas->attachments[0].is_depth) {
+					if (canvas->attachments[0].is_depth || canvas->attachments[0].is_stencil) {
 						argh = 1;
 					}
 					CHECK(tfx_glCopyImageSubData(
@@ -2831,7 +2890,13 @@ tfx_stats tfx_frame() {
 					canvas->current_height = canvas->current_height > 1 ? canvas->current_height : 1;
 				}
 				GLenum attach = GL_DEPTH_ATTACHMENT;
-				if (!attachment->is_depth) {
+				if (attachment->is_depth && attachment->is_stencil) {
+					attach = GL_DEPTH_STENCIL_ATTACHMENT;
+				}
+				else if (attachment->is_stencil) {
+					attach = GL_STENCIL_ATTACHMENT;
+				}
+				else if (!attachment->is_depth && !attachment->is_stencil) {
 					attach = GL_COLOR_ATTACHMENT0 + offset;
 					offset += 1;
 				}
@@ -2872,6 +2937,7 @@ tfx_stats tfx_frame() {
 			assert(canvas->allocated <= 2);
 			for (unsigned i = 0; i < canvas->allocated; i++) {
 				tfx_texture *attachment = &canvas->attachments[i];
+				// TODO: depth stencil
 				if (attachment->is_depth) {
 					CHECK(tfx_glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, attachment->gl_ids[0], 0));
 				}
@@ -2920,23 +2986,6 @@ tfx_stats tfx_frame() {
 		}
 
 		GLuint mask = 0;
-		// BUG: this will invalidate at the wrong time, needs to happen at end of pass.
-		if ((view->flags & TFXI_VIEW_INVALIDATE) == TFXI_VIEW_INVALIDATE && tfx_glInvalidateFramebuffer) {
-			int offset = 0;
-			GLenum attachments[8];
-			for (unsigned i = 0; i < canvas->allocated; i++) {
-				tfx_texture *attachment = &canvas->attachments[i];
-				if (attachment->is_depth) {
-					attachments[i] = GL_DEPTH_ATTACHMENT;
-				}
-				else {
-					attachments[i] = GL_COLOR_ATTACHMENT0 + offset;
-					offset += 1;
-				}
-			}
-			CHECK(tfx_glInvalidateFramebuffer(GL_FRAMEBUFFER, canvas->allocated, attachments));
-		}
-
 		if (view->flags & TFXI_VIEW_CLEAR_COLOR) {
 			mask |= GL_COLOR_BUFFER_BIT;
 			unsigned color = view->clear_color;

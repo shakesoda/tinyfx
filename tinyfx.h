@@ -97,7 +97,8 @@ typedef enum tfx_reset_flags {
 typedef enum tfx_view_flags {
 	TFX_VIEW_NONE = 0,
 	TFX_VIEW_INVALIDATE = 1 << 0,
-	TFX_VIEW_SORT_SEQUENTIAL = 1 << 1,
+	TFX_VIEW_FLUSH = 1 << 1,
+	TFX_VIEW_SORT_SEQUENTIAL = 1 << 2,
 	TFX_VIEW_DEFAULT = TFX_VIEW_SORT_SEQUENTIAL
 } tfx_view_flags;
 
@@ -190,6 +191,7 @@ typedef struct tfx_texture {
 	uint16_t mip_count;
 	tfx_format format;
 	bool is_depth;
+	bool is_stencil;
 	bool dirty;
 	uint16_t flags, _pad0;
 	void *internal;
