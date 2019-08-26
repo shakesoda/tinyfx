@@ -89,8 +89,11 @@ enum {
 typedef enum tfx_reset_flags {
 	TFX_RESET_NONE = 0,
 	TFX_RESET_MAX_ANISOTROPY = 1 << 0,
-	TFX_RESET_REPORT_GPU_TIMINGS = 1 << 1
-	// TFX_RESET_DEBUG...
+	TFX_RESET_REPORT_GPU_TIMINGS = 1 << 1,
+	// a basic text/image overlay for debugging.
+	// be aware that it's pretty slow, since it just plots pixels on cpu.
+	// you probably don't want to leave this on if you're not using it!
+	TFX_RESET_DEBUG_OVERLAY = 1 << 2,
 	// TFX_RESET_VR
 } tfx_reset_flags;
 
@@ -285,6 +288,16 @@ typedef struct tfx_caps {
 // TODO
 // #define TFX_API __attribute__ ((visibility("default")))
 #define TFX_API
+
+// bg_fg: 2x 8 bit palette colors. standard palette matches vga.
+// bg_fg = (bg << 8) | fg, assuming little endian
+TFX_API void tfx_debug_print(const int baserow, const int basecol, const uint16_t bg_fg, const int auto_wrap, const char *str);
+TFX_API void tfx_debug_blit_rgba(const int x, const int y, const int w, const int h, const uint32_t *pixels);
+// each pixel is an 8-bit palette index (standard palette matches vga, shared with text)
+TFX_API void tfx_debug_blit_pal(const int x, const int y, const int w, const int h, const uint8_t *pixels);
+// note: doesn't copy! make sure to keep this palette in memory yourself.
+// pass NULL to reset to default palette. expects ABGR input.
+TFX_API void tfx_debug_set_palette(const uint32_t *palette);
 
 TFX_API void tfx_set_platform_data(tfx_platform_data pd);
 
