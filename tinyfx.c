@@ -954,6 +954,16 @@ static tfx_program g_debug_program = 0;
 static tfx_texture g_debug_overlay;
 static tfx_uniform g_debug_texture;
 
+static const char *g_debug_fss_legacy =
+	"in vec2 f_coord;\n"
+	"uniform sampler2D _tfx_texture;\n"
+	"void main() {\n"
+	"	vec4 color = texture2D(_tfx_texture, vec2(f_coord.x, 1.0 - f_coord.y));\n"
+	"	if (color.a < 0.01) discard;\n"
+	"	gl_FragColor = vec4(color.rgb, 1.0) * color.a;\n"
+	"}\n"
+;
+
 static const char *g_debug_vss =
 	"in vec3 v_position;\n"
 	"out vec2 f_coord;\n"
@@ -1006,7 +1016,12 @@ void tfx_reset(uint16_t width, uint16_t height, tfx_reset_flags flags) {
 
 	if ((flags & TFX_RESET_DEBUG_OVERLAY) == TFX_RESET_DEBUG_OVERLAY) {
 		if (g_debug_program == 0) {
-			g_debug_program = tfx_program_new(g_debug_vss, g_debug_fss, g_debug_attribs);
+			if (g_platform_data.context_version < 30) {
+				g_debug_program = tfx_program_new(g_debug_vss, g_debug_fss_legacy, g_debug_attribs);
+			}
+			else {
+				g_debug_program = tfx_program_new(g_debug_vss, g_debug_fss, g_debug_attribs);
+			}
 			assert(g_debug_program);
 		}
 		if (g_debug_texture.name == NULL) {
@@ -3753,7 +3768,7 @@ tfx_stats tfx_frame() {
 		}
 		tfx_debug_print(row, 0, 0x100f, 0, "Total:");
 		str = tfx_sprintf("%dus", sum / 1000);
-		tfx_debug_print(row, 13 + max_width - strlen(str, 20), 0x100f, 0, str);
+		tfx_debug_print(row, 13 + max_width - strnlen(str, 20), 0x100f, 0, str);
 		free(str);
 	}
 
