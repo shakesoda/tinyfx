@@ -181,7 +181,7 @@ int main(int argc, char **argv) {
 			g_current_demo = g_queue_demo;
 
 			if (g_demos[g_current_demo].init) {
-				tfx_reset(g_width, g_height, TFX_RESET_NONE);
+				tfx_reset(g_width, g_height, flags);
 				g_demos[g_current_demo].init(g_width, g_height);
 			}
 		}
