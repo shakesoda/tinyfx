@@ -94,6 +94,7 @@ typedef enum tfx_reset_flags {
 	// be aware that it's pretty slow, since it just plots pixels on cpu.
 	// you probably don't want to leave this on if you're not using it!
 	TFX_RESET_DEBUG_OVERLAY = 1 << 2,
+	TFX_RESET_DEBUG_OVERLAY_STATS = 1 << 3
 	// TFX_RESET_VR
 } tfx_reset_flags;
 

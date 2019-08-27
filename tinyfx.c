@@ -515,6 +515,20 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glInsertEventMarkerEXT = get_proc_address("glInsertEventMarkerEXT");
 }
 
+static const char *tfx_sprintf(const char *fmt, ...) {
+	va_list args;
+	va_start(args, fmt);
+	char *buf = NULL;
+	int need = vsnprintf(buf, 0, fmt, args) + 1;
+	va_end(args);
+	va_start(args, fmt);
+	buf = malloc(need + 1);
+	buf[need] = '\0';
+	vsnprintf(buf, need, fmt, args);
+	va_end(args);
+	return buf;
+}
+
 static void tfx_printf(tfx_severity severity, const char *fmt, ...) {
 	va_list args;
 	va_start(args, fmt);
@@ -999,6 +1013,11 @@ void tfx_reset(uint16_t width, uint16_t height, tfx_reset_flags flags) {
 			g_debug_texture = tfx_uniform_new("_tfx_texture", TFX_UNIFORM_INT, 1);
 		}
 		g_flags |= TFX_RESET_DEBUG_OVERLAY;
+
+		if ((flags & TFX_RESET_DEBUG_OVERLAY_STATS) == TFX_RESET_DEBUG_OVERLAY_STATS) {
+			g_flags |= TFX_RESET_DEBUG_OVERLAY_STATS;
+		}
+
 		// align texture size up to nearest character size
 		uint16_t ow = (uint16_t)width;
 		ow += ow % 8;
@@ -3696,6 +3715,47 @@ tfx_stats tfx_frame() {
 		g_transient_buffer.buffers[i] = g_transient_buffer.buffers[i+1];
 	}
 	g_transient_buffer.buffers[TFX_TRANSIENT_BUFFER_COUNT-1] = tmp;
+
+	if ((g_flags & TFX_RESET_DEBUG_OVERLAY_STATS) == TFX_RESET_DEBUG_OVERLAY_STATS) {
+		int row = 0;
+
+		uint16_t color[2] = { 0x140f, 0x160f };
+
+		const char *str = tfx_sprintf("Draws: %5d", stats.draws);
+		tfx_debug_print(row++, 0, color[row % 2], 0, str);
+		free(str);
+
+		str = tfx_sprintf("Blits: %5d", stats.blits);
+		tfx_debug_print(row++, 0, color[row % 2], 0, str);
+		free(str);
+
+		int max_width = 0;
+		for (int i = 0; i < stats.num_timings; i++) {
+			int len = strnlen(stats.timings[i].name, 100);
+			if (len > max_width) {
+				max_width = len;
+			}
+		}
+		uint64_t sum = 0;
+		for (int i = 0; i < stats.num_timings; i++, row++) {
+			sum += stats.timings[i].time;
+			str = stats.timings[i].name;
+			int width = 5 + max_width;
+			tfx_debug_print(row, width - strnlen(str, 100), color[row % 2], 0, str);
+
+			str = tfx_sprintf("%3d", stats.timings[i].id);
+			tfx_debug_print(row, 0, color[row % 2], 0, str);
+			free(str);
+
+			str = tfx_sprintf("%dus", stats.timings[i].time / 1000);
+			tfx_debug_print(row, 8 + width - strnlen(str, 20), color[row % 2], 0, str);
+			free(str);
+		}
+		tfx_debug_print(row, 0, 0x100f, 0, "Total:");
+		str = tfx_sprintf("%dus", sum / 1000);
+		tfx_debug_print(row, 13 + max_width - strlen(str, 20), 0x100f, 0, str);
+		free(str);
+	}
 
 	return stats;
 }
