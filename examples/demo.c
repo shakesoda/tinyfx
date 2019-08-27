@@ -143,13 +143,30 @@ int main(int argc, char **argv) {
 	pd.context_version = 20;
 	pd.gl_get_proc_address = SDL_GL_GetProcAddress;
 	tfx_set_platform_data(pd);
-	tfx_reset(g_width, g_height, TFX_RESET_NONE);
+	tfx_reset_flags flags = TFX_RESET_NONE
+		| TFX_RESET_DEBUG_OVERLAY | TFX_RESET_DEBUG_OVERLAY_STATS
+		| TFX_RESET_REPORT_GPU_TIMINGS
+	;
+	tfx_reset(g_width, g_height, flags);
 
 	if (g_demos[g_current_demo].init) {
 		g_demos[g_current_demo].init(g_width, g_height);
 	}
 
+	double then = (double)SDL_GetPerformanceCounter() / (double)SDL_GetPerformanceFrequency();
+	double last_report = then;
 	while (g_alive) {
+		double now = (double)SDL_GetPerformanceCounter() / (double)SDL_GetPerformanceFrequency();
+		double delta = now - then;
+		then = now;
+
+#if 0
+		if (now - last_report > 1.0) {
+			printf("%0.2fms %0.1ffps\n", (float)(delta * 1000.0), (float)(1.0 / delta));
+			last_report = now;
+		}
+#endif
+
 		// on demo change, cleanup old and init new
 		if (g_current_demo != g_queue_demo) {
 			while (g_queue_demo < 0) {
