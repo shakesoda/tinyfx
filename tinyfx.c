@@ -1007,8 +1007,9 @@ void tfx_reset(uint16_t width, uint16_t height, tfx_reset_flags flags) {
 		use_timers = true;
 	}
 
-	if (g_debug_data) {
+	if (g_debug_data != NULL) {
 		free(g_debug_data);
+		g_debug_data = NULL;
 	}
 	if (g_debug_overlay.gl_count > 0) {
 		tfx_texture_free(&g_debug_overlay);
@@ -1578,6 +1579,7 @@ void tfx_buffer_free(tfx_buffer *buf) {
 	CHECK(tfx_glDeleteBuffers(1, &buf->gl_id));
 	if (buf->internal) {
 		free(buf->internal);
+		buf->internal = NULL;
 	}
 	int nb = sb_count(g_buffers);
 	for (int i = 0; i < nb; i++) {
