@@ -318,6 +318,7 @@ PFNGLGETQUERYOBJECTUI64VPROC tfx_glGetQueryObjectui64v;
 PFNGLGENBUFFERSPROC tfx_glGenBuffers;
 PFNGLBINDBUFFERPROC tfx_glBindBuffer;
 PFNGLBUFFERDATAPROC tfx_glBufferData;
+PFNGLBUFFERSTORAGEPROC tfx_glBufferStorage;
 PFNGLDELETEBUFFERSPROC tfx_glDeleteBuffers;
 PFNGLDELETETEXTURESPROC tfx_glDeleteTextures;
 PFNGLCREATESHADERPROC tfx_glCreateShader;
@@ -344,6 +345,7 @@ PFNGLTEXIMAGE2DPROC tfx_glTexImage2D;
 PFNGLTEXIMAGE3DPROC tfx_glTexImage3D;
 PFNGLTEXIMAGE2DMULTISAMPLEPROC tfx_glTexImage2DMultisample;
 PFNGLTEXSUBIMAGE2DPROC tfx_glTexSubImage2D;
+PFNGLINVALIDATETEXSUBIMAGEPROC tfx_glInvalidateTexSubImage;
 PFNGLGENERATEMIPMAPPROC tfx_glGenerateMipmap;
 PFNGLGENFRAMEBUFFERSPROC tfx_glGenFramebuffers;
 PFNGLDELETEFRAMEBUFFERSPROC tfx_glDeleteFramebuffers;
@@ -426,6 +428,7 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glGenBuffers = get_proc_address("glGenBuffers");
 	tfx_glBindBuffer = get_proc_address("glBindBuffer");
 	tfx_glBufferData = get_proc_address("glBufferData");
+	tfx_glBufferStorage = get_proc_address("glBufferStorage");
 	tfx_glDeleteBuffers = get_proc_address("glDeleteBuffers");
 	tfx_glDeleteTextures= get_proc_address("glDeleteTextures");
 	tfx_glCreateShader = get_proc_address("glCreateShader");
@@ -452,6 +455,7 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glTexImage3D = get_proc_address("glTexImage3D");
 	tfx_glTexImage2DMultisample = get_proc_address("glTexImage2DMultisample");
 	tfx_glTexSubImage2D = get_proc_address("glTexSubImage2D");
+	tfx_glInvalidateTexSubImage = get_proc_address("glInvalidateTexSubImage");
 	tfx_glGenerateMipmap = get_proc_address("glGenerateMipmap");
 	tfx_glGenFramebuffers = get_proc_address("glGenFramebuffers");
 	tfx_glDeleteFramebuffers = get_proc_address("glDeleteFramebuffers");
@@ -887,7 +891,12 @@ static void tvb_reset() {
 			GLuint id;
 			CHECK(tfx_glGenBuffers(1, &id));
 			CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, id));
-			CHECK(tfx_glBufferData(GL_ARRAY_BUFFER, TFX_TRANSIENT_BUFFER_SIZE, NULL, GL_DYNAMIC_DRAW));
+			if (tfx_glBufferStorage) {
+				CHECK(tfx_glBufferStorage(GL_ARRAY_BUFFER, TFX_TRANSIENT_BUFFER_SIZE, NULL, GL_DYNAMIC_STORAGE_BIT | GL_MAP_WRITE_BIT));
+			}
+			else {
+				CHECK(tfx_glBufferData(GL_ARRAY_BUFFER, TFX_TRANSIENT_BUFFER_SIZE, NULL, GL_DYNAMIC_DRAW));
+			}
 			g_transient_buffer.buffers[i].gl_id = id;
 		}
 	}
@@ -1080,18 +1089,20 @@ void tfx_reset(uint16_t width, uint16_t height, tfx_reset_flags flags) {
 			CHECK(tfx_glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &g_max_aniso));
 		}
 		int nt = sb_count(g_textures);
-		for (int i = 0; i < nt; i++) {
-			tfx_texture *tex = &g_textures[i];
-			for (unsigned j = 0; j < tex->gl_count; j++) {
-				if ((tex->flags & TFX_TEXTURE_MSAA_SAMPLE) == TFX_TEXTURE_MSAA_SAMPLE) {
-					continue;
+		if (g_max_aniso > 0.0f) {
+			for (int i = 0; i < nt; i++) {
+				tfx_texture *tex = &g_textures[i];
+				for (unsigned j = 0; j < tex->gl_count; j++) {
+					if ((tex->flags & TFX_TEXTURE_MSAA_SAMPLE) == TFX_TEXTURE_MSAA_SAMPLE) {
+						continue;
+					}
+					GLenum fmt = GL_TEXTURE_2D;
+					if ((tex->flags & TFX_TEXTURE_CUBE) == TFX_TEXTURE_CUBE) {
+						fmt = GL_TEXTURE_CUBE_MAP;
+					}
+					CHECK(tfx_glBindTexture(fmt, tex->gl_ids[j]));
+					CHECK(tfx_glTexParameterf(fmt, GL_TEXTURE_MAX_ANISOTROPY_EXT, g_max_aniso));
 				}
-				GLenum fmt = GL_TEXTURE_2D;
-				if ((tex->flags & TFX_TEXTURE_CUBE) == TFX_TEXTURE_CUBE) {
-					fmt = GL_TEXTURE_CUBE_MAP;
-				}
-				CHECK(tfx_glBindTexture(fmt, tex->gl_ids[j]));
-				CHECK(tfx_glTexParameterf(fmt, GL_TEXTURE_MAX_ANISOTROPY_EXT, g_max_aniso));
 			}
 		}
 	}
@@ -1536,7 +1547,12 @@ tfx_buffer tfx_buffer_new(const void *data, size_t size, tfx_vertex_format *form
 	CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, buffer.gl_id));
 
 	if (size != 0) {
-		CHECK(tfx_glBufferData(GL_ARRAY_BUFFER, size, data, gl_usage));
+		if (tfx_glBufferStorage) {
+			CHECK(tfx_glBufferStorage(GL_ARRAY_BUFFER, size, data, (gl_usage == GL_DYNAMIC_DRAW ? (GL_DYNAMIC_STORAGE_BIT | GL_MAP_WRITE_BIT) : 0)))
+		}
+		else {
+			CHECK(tfx_glBufferData(GL_ARRAY_BUFFER, size, data, gl_usage));
+		}
 	}
 
 	sb_push(g_buffers, buffer);
@@ -2759,20 +2775,23 @@ static void render_letter(
 	uint32_t *pixels) {
 	// Calculate character index in font character array
 	// Shifting by 3 to the left is equal to multiplying by 2^3
-	int baseIndex = charCode << 3;
+	unsigned baseIndex = charCode << 3;
 	// Iterate over character raster rows
-	for (int curRow = 0; curRow < 8; curRow++) {
+	for (unsigned curRow = 0; curRow < 8; curRow++) {
 		// Get character raster row bits
-		int rowBits = vga_font[baseIndex + curRow];
+		const unsigned rowBits = vga_font[baseIndex + curRow];
+		const unsigned y = baseRow + curRow + 2;
 		// Iterate over character raster row bits (columns)
-		for (int curCol = 0; curCol < 8; curCol++) {
+		for (unsigned curCol = 0; curCol < 8; curCol++) {
 			// Calculate position of pixel on image
-			int x = baseCol + curCol + 2;
-			int y = baseRow + curRow + 2;
+			unsigned x = baseCol + curCol + 2;
 			// Calculate pixel index in image data array
-			int index = y * pitch + x;
+			unsigned index = y * pitch + x;
+			// assert(x < g_debug_overlay.width);
+			// assert(y < g_debug_overlay.height);
 			// Determine pixel color based on current bit value
-			pixels[index] = (((rowBits << curCol) & 0x80) == 0x80) ? fg : bg;
+			uint32_t fill = (((rowBits << curCol) & 0x80) == 0x80) ? fg : bg;
+			pixels[index] = fill;
 		}
 	}
 }
@@ -2973,7 +2992,7 @@ tfx_stats tfx_frame() {
 	if (g_transient_buffer.offset > 0) {
 		CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, g_transient_buffer.buffers[0].gl_id));
 		if (tfx_glMapBufferRange && tfx_glUnmapBuffer) {
-			void *ptr = tfx_glMapBufferRange(GL_ARRAY_BUFFER, 0, g_transient_buffer.offset, GL_MAP_WRITE_BIT);
+			void *ptr = tfx_glMapBufferRange(GL_ARRAY_BUFFER, 0, g_transient_buffer.offset, GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT);
 			if (ptr) {
 				memcpy(ptr, g_transient_buffer.data, g_transient_buffer.offset);
 				CHECK(tfx_glUnmapBuffer(GL_ARRAY_BUFFER));
@@ -2991,7 +3010,7 @@ tfx_stats tfx_frame() {
 		if (params) {
 			CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, buf->gl_id));
 			if (tfx_glMapBufferRange && tfx_glUnmapBuffer) {
-				void *ptr = tfx_glMapBufferRange(GL_ARRAY_BUFFER, params->offset, params->size, GL_MAP_WRITE_BIT);
+				void *ptr = tfx_glMapBufferRange(GL_ARRAY_BUFFER, params->offset, params->size, GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT);
 				if (ptr) {
 					memcpy(ptr, params->update_data, params->size);
 					CHECK(tfx_glUnmapBuffer(GL_ARRAY_BUFFER));
@@ -3014,6 +3033,9 @@ tfx_stats tfx_frame() {
 			// spin the buffer id before updating
 			tex->gl_idx = (tex->gl_idx + 1) % tex->gl_count;
 			tfx_glBindTexture(GL_TEXTURE_2D, tex->gl_ids[tex->gl_idx]);
+			if (tfx_glInvalidateTexSubImage) {
+				tfx_glInvalidateTexSubImage(tex->gl_ids[tex->gl_idx], 0, 0, 0, 0, tex->width, tex->height, 1);
+			}
 			tfx_glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, tex->width, tex->height, internal->format, internal->type, internal->update_data);
 			internal->update_data = NULL;
 		}
