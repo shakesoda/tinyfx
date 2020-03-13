@@ -52,6 +52,7 @@ enum {
 
 	// misc state
 	TFX_STATE_MSAA            = 1 << 12,
+	TFX_STATE_WIREFRAME       = 1 << 13,
 
 	TFX_STATE_DEFAULT = 0
 		| TFX_STATE_CULL_CCW

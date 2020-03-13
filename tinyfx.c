@@ -389,6 +389,7 @@ PFNGLDEPTHFUNCPROC tfx_glDepthFunc;
 PFNGLDISABLEPROC tfx_glDisable;
 PFNGLDEPTHMASKPROC tfx_glDepthMask;
 PFNGLFRONTFACEPROC tfx_glFrontFace;
+PFNGLPOLYGONMODEPROC tfx_glPolygonMode;
 PFNGLUNIFORM1IVPROC tfx_glUniform1iv;
 PFNGLUNIFORM1FVPROC tfx_glUniform1fv;
 PFNGLUNIFORM2FVPROC tfx_glUniform2fv;
@@ -503,6 +504,7 @@ void load_em_up(void* (*get_proc_address)(const char*)) {
 	tfx_glDisable = get_proc_address("glDisable");
 	tfx_glDepthMask = get_proc_address("glDepthMask");
 	tfx_glFrontFace = get_proc_address("glFrontFace");
+	tfx_glPolygonMode = get_proc_address("glPolygonMode");
 	tfx_glUniform1iv = get_proc_address("glUniform1iv");
 	tfx_glUniform1fv = get_proc_address("glUniform1fv");
 	tfx_glUniform2fv = get_proc_address("glUniform2fv");
@@ -3602,6 +3604,16 @@ tfx_stats tfx_frame() {
 				case TFX_STATE_DRAW_TRI_STRIP:  mode = GL_TRIANGLE_STRIP; break;
 				case TFX_STATE_DRAW_TRI_FAN:    mode = GL_TRIANGLE_FAN; break;
 				default: break; // unspecified = triangles.
+			}
+
+
+			if (CHANGED(flags_diff, TFX_STATE_WIREFRAME)) {
+				if (draw.flags & TFX_STATE_WIREFRAME) {
+					CHECK(tfx_glPolygonMode(GL_FRONT_AND_BACK, GL_LINE));
+				}
+				else {
+					CHECK(tfx_glPolygonMode(GL_FRONT_AND_BACK, GL_FILL));
+				}
 			}
 
 			if (draw.use_vbo) {
