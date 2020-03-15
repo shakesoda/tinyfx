@@ -368,6 +368,7 @@ TFX_API void tfx_set_indices(tfx_buffer *ibo, int count, int offset);
 TFX_API void tfx_dispatch(uint8_t id, tfx_program program, uint32_t x, uint32_t y, uint32_t z);
 // TFX_API void tfx_submit_ordered(uint8_t id, tfx_program program, uint32_t depth, bool retain);
 TFX_API void tfx_submit(uint8_t id, tfx_program program, bool retain);
+// submit an empty draw. useful for using draw callbacks and ensuring views are processed.
 TFX_API void tfx_touch(uint8_t id);
 
 TFX_API void tfx_blit(uint8_t src, uint8_t dst, uint16_t x, uint16_t y, uint16_t w, uint16_t h, int mip);

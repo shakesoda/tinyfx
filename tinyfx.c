@@ -2590,8 +2590,16 @@ void tfx_touch(uint8_t id) {
 	tfx_view *view = &g_back.views[id];
 	assert(view != NULL);
 
+	tfx_draw_callback cb = g_tmp_draw.callback;
+	uint64_t flags = g_tmp_draw.flags;
 	reset();
+	g_tmp_draw.callback = cb;
+	if (g_tmp_draw.callback) {
+		g_tmp_draw.flags = flags;
+	}
 	sb_push(view->draws, g_tmp_draw);
+	g_tmp_draw.callback = NULL;
+	g_tmp_draw.flags = 0;
 }
 
 void tfx_blit(uint8_t dst, uint8_t src, uint16_t x, uint16_t y, uint16_t w, uint16_t h, int mip) {
@@ -3035,6 +3043,7 @@ tfx_stats tfx_frame() {
 	if (g_transient_buffer.offset > 0) {
 		CHECK(tfx_glBindBuffer(GL_ARRAY_BUFFER, g_transient_buffer.buffers[0].gl_id));
 		if (tfx_glMapBufferRange && tfx_glUnmapBuffer) {
+			// this is backed by multiple buffers, so invalidate might be pointless. need to profile.
 			void *ptr = tfx_glMapBufferRange(GL_ARRAY_BUFFER, 0, g_transient_buffer.offset, GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT);
 			if (ptr) {
 				memcpy(ptr, g_transient_buffer.data, g_transient_buffer.offset);
@@ -3042,6 +3051,8 @@ tfx_stats tfx_frame() {
 			}
 		}
 		else {
+			// orphan the buffer explicitly if mapping isn't available
+			CHECK(tfx_glBufferData(GL_ARRAY_BUFFER, TFX_TRANSIENT_BUFFER_SIZE, NULL, GL_DYNAMIC_DRAW));
 			CHECK(tfx_glBufferSubData(GL_ARRAY_BUFFER, 0, g_transient_buffer.offset, g_transient_buffer.data));
 		}
 	}
@@ -3060,6 +3071,7 @@ tfx_stats tfx_frame() {
 				}
 			}
 			else {
+				CHECK(tfx_glBufferData(GL_ARRAY_BUFFER, params->size, NULL, GL_DYNAMIC_DRAW));
 				CHECK(tfx_glBufferSubData(GL_ARRAY_BUFFER, params->offset, params->size, params->update_data));
 			}
 			free(params);
@@ -3814,11 +3826,13 @@ tfx_stats tfx_frame() {
 		uint16_t color[2] = { 0x140f, 0x160f };
 
 		const char *str = tfx_sprintf("Draws: %5d", stats.draws);
-		tfx_debug_print(row++, 0, color[row % 2], 0, str);
+		int lrow = row; row++; // avoid warning from -Wunsequenced
+		tfx_debug_print(lrow, 0, color[row % 2], 0, str);
 		free((char*)str);
 
+		lrow = row; row++;
 		str = tfx_sprintf("Blits: %5d", stats.blits);
-		tfx_debug_print(row++, 0, color[row % 2], 0, str);
+		tfx_debug_print(lrow, 0, color[row % 2], 0, str);
 		free((char*)str);
 
 		int max_width = 0;
