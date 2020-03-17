@@ -133,7 +133,7 @@ static char *tfx_strdup(const char *src) {
 #ifdef TFX_DEBUG
 //#define TFX_FATAL_ERRORS
 #	ifdef TFX_FATAL_ERRORS
-#		define CHECK(fn) fn; { GLenum _status; while ((_status = tfx_glGetError())) { if (_status == GL_NO_ERROR) break; TFX_ERROR("%s:%d GL ERROR: %d", __FILE__, __LINE__, _status); assert(false); } }
+#		define CHECK(fn) fn; { GLenum _status; while ((_status = tfx_glGetError())) { if (_status == GL_NO_ERROR) break; TFX_ERROR("%s:%d GL ERROR: %d", __FILE__, __LINE__, _status); assert(0); } }
 #	else
 #		define CHECK(fn) fn; { GLenum _status; while ((_status = tfx_glGetError())) { if (_status == GL_NO_ERROR) break; TFX_ERROR("%s:%d GL ERROR: %d", __FILE__, __LINE__, _status); } }
 #	endif
@@ -899,6 +899,7 @@ static void basic_log(const char *msg, tfx_severity level) {
 #ifdef _MSC_VER
 	OutputDebugString(msg);
 	OutputDebugString("\n");
+	printf("%s\n", msg);
 #else
 	printf("%s\n", msg);
 #endif
@@ -1014,11 +1015,14 @@ static const char *g_debug_fss =
 ;
 
 static const char *g_debug_attribs[] = { "v_position", NULL };
+static bool did_you_call_tfx_reset = false;
 
 void tfx_reset(uint16_t width, uint16_t height, tfx_reset_flags flags) {
 	if (g_platform_data.gl_get_proc_address != NULL) {
 		load_em_up(g_platform_data.gl_get_proc_address);
 	}
+
+	did_you_call_tfx_reset = true;
 
 	g_caps = tfx_get_caps();
 	// we require these, unless/until backporting for pre-compute HW.
@@ -1047,10 +1051,10 @@ void tfx_reset(uint16_t width, uint16_t height, tfx_reset_flags flags) {
 	if ((flags & TFX_RESET_DEBUG_OVERLAY) == TFX_RESET_DEBUG_OVERLAY) {
 		if (g_debug_program == 0) {
 			if (g_platform_data.context_version < 30) {
-				g_debug_program = tfx_program_new(g_debug_vss, g_debug_fss_legacy, g_debug_attribs);
+				g_debug_program = tfx_program_new(g_debug_vss, g_debug_fss_legacy, g_debug_attribs, -1);
 			}
 			else {
-				g_debug_program = tfx_program_new(g_debug_vss, g_debug_fss, g_debug_attribs);
+				g_debug_program = tfx_program_new(g_debug_vss, g_debug_fss, g_debug_attribs, -1);
 			}
 			assert(g_debug_program);
 		}
@@ -1293,9 +1297,9 @@ const char *cs_prepend = ""
 	"#line 1\n"
 ;
 
-static char *sappend(const char *left, const char *right) {
+static char *sappend(const char *left, const char *right, const int right_len) {
 	size_t ls = strlen(left);
-	size_t rs = strlen(right);
+	size_t rs = (size_t)right_len;
 	char *ss = (char*)malloc(ls+rs+1);
 	memcpy(ss, left, ls);
 	memcpy(ss+ls, right, rs);
@@ -1303,7 +1307,7 @@ static char *sappend(const char *left, const char *right) {
 	return ss;
 }
 
-static char *shader_concat(const char *base, GLenum shader_type) {
+static char *shader_concat(const char *base, GLenum shader_type, const int base_len) {
 	bool legacy = g_platform_data.context_version < 30;
 
 	const char *prepend = "";
@@ -1331,7 +1335,7 @@ static char *shader_concat(const char *base, GLenum shader_type) {
 		default: break;
 	}
 
-	char *ss1 = sappend(prepend, base);
+	char *ss1 = sappend(prepend, base, base_len);
 
 	char version[64];
 	int gl_major = g_platform_data.context_version / 10;
@@ -1352,16 +1356,16 @@ static char *shader_concat(const char *base, GLenum shader_type) {
 	}
 	snprintf(version, 64, "#version %d%d0%s\n", gl_major, gl_minor, suffix);
 
-	char *ss2 = sappend(ss1, append);
+	char *ss2 = sappend(ss1, append, strlen(append));
 	free(ss1);
 
-	char *ss = sappend(version, ss2);
+	char *ss = sappend(version, ss2, strlen(ss2));
 	free(ss2);
 
 	return ss;
 }
 
-static GLuint load_shader(GLenum type, const char *shaderSrc) {
+static GLuint load_shader(GLenum type, const char *shaderSrc, const int len) {
 	g_shaderc_allocated = true;
 
 	GLuint shader = CHECK(tfx_glCreateShader(type));
@@ -1370,7 +1374,11 @@ static GLuint load_shader(GLenum type, const char *shaderSrc) {
 		return 0;
 	}
 
-	char *ss = shader_concat(shaderSrc, type);
+	if (len <= 0) {
+		return 0;
+	}
+
+	char *ss = shader_concat(shaderSrc, type, len);
 	CHECK(tfx_glShaderSource(shader, 1, (const char**)&ss, NULL));
 	CHECK(tfx_glCompileShader(shader));
 
@@ -1383,13 +1391,16 @@ static GLuint load_shader(GLenum type, const char *shaderSrc) {
 			char* infoLog = (char*)malloc(sizeof(char) * infoLen);
 			CHECK(tfx_glGetShaderInfoLog(shader, infoLen, NULL, infoLog));
 			TFX_ERROR("Error compiling shader:\n%s", infoLog);
+			// TFX_ERROR("FULL SHADER\n\n\n%s\n\n\n", ss);
 #ifdef _MSC_VER
 			OutputDebugString(infoLog);
 #endif
 			free(infoLog);
 		}
 		CHECK(tfx_glDeleteShader(shader));
+#ifdef TFX_DEBUG
 		assert(compiled);
+#endif
 		free(ss);
 		return 0;
 	}
@@ -1416,13 +1427,21 @@ static bool try_program_link(GLuint program) {
 	return true;
 }
 
-tfx_program tfx_program_gs_new(const char *_gss, const char *_vss, const char *_fss, const char *attribs[]) {
+tfx_program tfx_program_gs_len_new(const char *_gss, const int _gs_len, const char *_vss, const int _vs_len, const char *_fss, const int _fs_len, const char *attribs[], const int attrib_count) {
+	assert(did_you_call_tfx_reset);
+
 	GLuint gs = 0;
 	if (_gss) {
-		gs = load_shader(GL_GEOMETRY_SHADER, _gss);
+		gs = load_shader(GL_GEOMETRY_SHADER, _gss, _gs_len);
 	}
-	GLuint vs = load_shader(GL_VERTEX_SHADER, _vss);
-	GLuint fs = load_shader(GL_FRAGMENT_SHADER, _fss);
+	GLuint vs = 0;
+	if (_vss) {
+		vs = load_shader(GL_VERTEX_SHADER, _vss, _vs_len);
+	}
+	GLuint fs = 0;
+	if (_fss) {
+		fs = load_shader(GL_FRAGMENT_SHADER, _fss, _fs_len);
+	}
 	GLuint program = CHECK(tfx_glCreateProgram());
 	if (!program) {
 		return 0;
@@ -1431,15 +1450,26 @@ tfx_program tfx_program_gs_new(const char *_gss, const char *_vss, const char *_
 	if (gs) {
 		CHECK(tfx_glAttachShader(program, gs));
 	}
-	CHECK(tfx_glAttachShader(program, vs));
-	CHECK(tfx_glAttachShader(program, fs));
+	if (vs) {
+		CHECK(tfx_glAttachShader(program, vs));
+	}
+	if (fs) {
+		CHECK(tfx_glAttachShader(program, fs));
+	}
 
-	const char **it = attribs;
-	int i = 0;
-	while (*it != NULL) {
-		CHECK(tfx_glBindAttribLocation(program, i, *it));
-		i++;
-		it++;
+	if (attrib_count >= 0) {
+		for (int i = 0; i < attrib_count; i++) {
+			CHECK(tfx_glBindAttribLocation(program, i, attribs[i]));
+		}
+	}
+	else {
+		const char **it = attribs;
+		int i = 0;
+		while (*it != NULL) {
+			CHECK(tfx_glBindAttribLocation(program, i, *it));
+			i++;
+			it++;
+		}
 	}
 
 	// TODO: accept frag data binding array
@@ -1463,12 +1493,30 @@ tfx_program tfx_program_gs_new(const char *_gss, const char *_vss, const char *_
 	return program;
 }
 
-tfx_program tfx_program_cs_new(const char *css) {
+tfx_program tfx_program_gs_new(const char *_gss, const char *_vss, const char *_fss, const char *attribs[], const int attrib_count) {
+	int gs_len = 0;
+	int vs_len = 0;
+	int fs_len = 0;
+	if (_gss) {
+		gs_len = strlen(_gss);
+	}
+	if (_vss) {
+		vs_len = strlen(_vss);
+	}
+	if (_fss) {
+		fs_len = strlen(_fss);
+	}
+	return tfx_program_gs_len_new(_gss, gs_len, _vss, vs_len, _fss, fs_len, attribs, attrib_count);
+}
+
+tfx_program tfx_program_cs_len_new(const char *css, const int cs_len) {
+	assert(did_you_call_tfx_reset);
+
 	if (!g_caps.compute) {
 		return 0;
 	}
 
-	GLuint cs = load_shader(GL_COMPUTE_SHADER, css);
+	GLuint cs = load_shader(GL_COMPUTE_SHADER, css, cs_len);
 	GLuint program = CHECK(tfx_glCreateProgram());
 	if (!program) {
 		return 0;
@@ -1485,8 +1533,20 @@ tfx_program tfx_program_cs_new(const char *css) {
 	return program;
 }
 
-tfx_program tfx_program_new(const char *_vss, const char *_fss, const char *attribs[]) {
-	return tfx_program_gs_new(NULL, _vss, _fss, attribs);
+tfx_program tfx_program_cs_new(const char *_css) {
+	int cs_len = 0;
+	if (_css) {
+		cs_len = strlen(_css);
+	}
+	return tfx_program_cs_len_new(_css, cs_len);
+}
+
+tfx_program tfx_program_new(const char *_vss, const char *_fss, const char *attribs[], const int attrib_count) {
+	return tfx_program_gs_new(NULL, _vss, _fss, attribs, attrib_count);
+}
+
+tfx_program tfx_program_len_new(const char *_vss, const int _vs_len, const char *_fss, const int _fs_len, const char *attribs[], const int attrib_count) {
+	return tfx_program_gs_len_new(NULL, 0, _vss, _vs_len, _fss, _fs_len, attribs, attrib_count);
 }
 
 tfx_vertex_format tfx_vertex_format_start() {
@@ -1530,7 +1590,7 @@ void tfx_vertex_format_end(tfx_vertex_format *fmt) {
 			case TFX_TYPE_USHORT:
 			case TFX_TYPE_SHORT: bytes = 2; break;
 			case TFX_TYPE_FLOAT: bytes = 4; break;
-			default: assert(false); break;
+			default: assert(0); break;
 		}
 		vc->offset = stride;
 		stride += vc->size * bytes;
@@ -1539,12 +1599,14 @@ void tfx_vertex_format_end(tfx_vertex_format *fmt) {
 }
 
 tfx_buffer tfx_buffer_new(const void *data, size_t size, tfx_vertex_format *format, tfx_buffer_flags flags) {
+	assert(did_you_call_tfx_reset);
+
 	GLenum gl_usage = GL_STATIC_DRAW;
 	switch (flags) {
 		case TFX_BUFFER_MUTABLE: gl_usage = GL_DYNAMIC_DRAW; break;
 		//case TFX_BUFFER_STREAM:  gl_usage = GL_STREAM_DRAW; break;
 		default: break;
-		//default: assert(false); break;
+		//default: assert(0); break;
 	}
 
 	tfx_buffer buffer;
@@ -1632,6 +1694,8 @@ typedef struct tfx_texture_params {
 } tfx_texture_params;
 
 tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, const void *data, tfx_format format, uint16_t flags) {
+	assert(did_you_call_tfx_reset);
+
 	tfx_texture t;
 	memset(&t, 0, sizeof(tfx_texture));
 
@@ -1766,7 +1830,7 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, const void 
 		case TFX_FORMAT_RGBA8_D16:
 		case TFX_FORMAT_RGBA8_D24:
 		default:
-			assert(false);
+			assert(0);
 			break;
 	}
 	t.is_stencil = stencil;
@@ -1787,7 +1851,7 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, const void 
 	GLenum mode = 0;
 	if (layers > 1) {
 		if (cube) {
-			assert(false); // only supported by GL4.0+ or with ARB_texture_cube_map_array
+			assert(0); // only supported by GL4.0+ or with ARB_texture_cube_map_array
 			mode = GL_TEXTURE_CUBE_MAP_ARRAY;
 		}
 		else {
@@ -1864,7 +1928,7 @@ tfx_texture tfx_texture_new(uint16_t w, uint16_t h, uint16_t layers, const void 
 
 		if (layers > 1) {
 			if (cube) {
-				assert(false);
+				assert(0);
 			}
 			else if (tfx_glTexStorage3D) {
 				// mipmaps are currently unsupported for 3d/array textures.
@@ -2006,7 +2070,7 @@ bool canvas_reconfigure(tfx_canvas *c, bool msaa) {
 	// TODO: return something more error-y
 	GLenum status = CHECK(tfx_glCheckFramebufferStatus(GL_FRAMEBUFFER));
 	if (status != GL_FRAMEBUFFER_COMPLETE) {
-		assert(false);
+		assert(0);
 		return false;
 	}
 
@@ -2014,6 +2078,8 @@ bool canvas_reconfigure(tfx_canvas *c, bool msaa) {
 }
 
 tfx_canvas tfx_canvas_attachments_new(bool claim_attachments, int count, tfx_texture *attachments) {
+	assert(did_you_call_tfx_reset);
+
 	tfx_canvas c;
 	memset(&c, 0, sizeof(tfx_canvas));
 
@@ -2100,6 +2166,8 @@ void tfx_canvas_free(tfx_canvas *c) {
 }
 
 tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format, uint16_t flags) {
+	assert(did_you_call_tfx_reset);
+
 	tfx_texture attachments[2];
 	int n = 0;
 
@@ -2171,7 +2239,7 @@ tfx_canvas tfx_canvas_new(uint16_t w, uint16_t h, tfx_format format, uint16_t fl
 			depth_fmt = format;
 			break;
 		}
-		default: assert(false);
+		default: assert(0);
 	}
 
 	if (has_color) {
@@ -2258,7 +2326,7 @@ void tfx_view_set_flags(uint8_t id, tfx_view_flags flags) {
 	}
 	// NYI
 	if (FLAG(flags, TFX_VIEW_SORT_SEQUENTIAL)) {
-		assert(false);
+		assert(0);
 		view->flags |= TFXI_VIEW_SORT_SEQUENTIAL;
 	}
 #undef FLAG
@@ -2319,7 +2387,7 @@ void tfx_view_set_depth_test(uint8_t id, tfx_depth_test mode) {
 			view->flags |= TFXI_VIEW_DEPTH_TEST_EQ;
 			break;
 		}
-		default: assert(false); break;
+		default: assert(0); break;
 	}
 }
 
@@ -2653,7 +2721,7 @@ static void release_compiler() {
 	g_shaderc_allocated = false;
 }
 
-void update_uniforms(tfx_draw *draw) {
+static void update_uniforms(tfx_draw *draw) {
 	int nu = sb_count(draw->uniforms);
 	for (int j = 0; j < nu; j++) {
 		tfx_uniform uniform = draw->uniforms[j];
@@ -2678,7 +2746,7 @@ void update_uniforms(tfx_draw *draw) {
 			case TFX_UNIFORM_MAT2:  CHECK(tfx_glUniformMatrix2fv(loc, uniform.last_count, 0, uniform.fdata)); break;
 			case TFX_UNIFORM_MAT3:  CHECK(tfx_glUniformMatrix3fv(loc, uniform.last_count, 0, uniform.fdata)); break;
 			case TFX_UNIFORM_MAT4:  CHECK(tfx_glUniformMatrix4fv(loc, uniform.last_count, 0, uniform.fdata)); break;
-			default: assert(false); break;
+			default: assert(0); break;
 		}
 	}
 }
@@ -2912,6 +2980,8 @@ void tfx_debug_set_palette(const uint32_t *palette) {
 }
 
 void tfx_debug_blit_rgba(const int x, const int y, const int w, const int h, const uint32_t *pixels) {
+	assert(did_you_call_tfx_reset);
+
 	if ((g_flags & TFX_RESET_DEBUG_OVERLAY) != TFX_RESET_DEBUG_OVERLAY) {
 		return;
 	}
@@ -2928,6 +2998,8 @@ void tfx_debug_blit_rgba(const int x, const int y, const int w, const int h, con
 }
 
 void tfx_debug_blit_pal(const int x, const int y, const int w, const int h, const uint8_t *pixels) {
+	assert(did_you_call_tfx_reset);
+
 	if ((g_flags & TFX_RESET_DEBUG_OVERLAY) != TFX_RESET_DEBUG_OVERLAY) {
 		return;
 	}
@@ -2945,6 +3017,8 @@ void tfx_debug_blit_pal(const int x, const int y, const int w, const int h, cons
 }
 
 void tfx_debug_print(const int baserow, const int basecol, const uint16_t bg_fg, const int auto_wrap, const char *str) {
+	assert(did_you_call_tfx_reset);
+
 	if ((g_flags & TFX_RESET_DEBUG_OVERLAY) != TFX_RESET_DEBUG_OVERLAY) {
 		return;
 	}
@@ -2994,6 +3068,8 @@ void tfx_debug_print(const int baserow, const int basecol, const uint16_t bg_fg,
 }
 
 tfx_stats tfx_frame() {
+	assert(did_you_call_tfx_reset);
+
 	/* This isn't used on RPi, but should free memory on some devices. When
 	 * you call tfx_frame, you should be done with your shader compiles for
 	 * a good while, since that should only be done during init/loading. */
@@ -3281,7 +3357,7 @@ tfx_stats tfx_frame() {
 					CHECK(tfx_glBindFramebuffer(GL_READ_FRAMEBUFFER, src->msaa ? src->gl_fbo[1] : src->gl_fbo[0]));
 					if (blit->source_mip != src->current_mip) {
 						// TODO: calculate correct dest size, update mip bindings
-						assert(false);
+						assert(0);
 						// CHECK(tfx_glFramebufferTexture2D(GL_FRAMEBUFFER, attach, GL_TEXTURE_2D, attachment->gl_ids[0], canvas->current_mip));
 					}
 					CHECK(tfx_glBlitFramebuffer(
@@ -3323,7 +3399,7 @@ tfx_stats tfx_frame() {
 						GLenum fmt = internal->internal_format;
 						switch (fmt) {
 							case GL_DEPTH_COMPONENT16: fmt = GL_R16F; break;
-							case GL_DEPTH_COMPONENT24: assert(false); break;
+							case GL_DEPTH_COMPONENT24: assert(0); break;
 							case GL_DEPTH_COMPONENT32: fmt = GL_R32F; break;
 							default: break;
 						}
@@ -3669,7 +3745,7 @@ tfx_stats tfx_frame() {
 						case TFX_TYPE_USHORT: gl_type = GL_UNSIGNED_SHORT; break;
 						case TFX_TYPE_SHORT:  gl_type = GL_SHORT; break;
 						case TFX_TYPE_FLOAT: break;
-						default: assert(false); break;
+						default: assert(0); break;
 					}
 					if (i >= last_count) {
 						CHECK(tfx_glEnableVertexAttribArray(real));

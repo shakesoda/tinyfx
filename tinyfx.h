@@ -345,9 +345,17 @@ TFX_API uint16_t tfx_view_get_height(uint8_t id);
 TFX_API void tfx_view_get_dimensions(uint8_t id, uint16_t *w, uint16_t *h);
 // TFX_API void tfx_view_set_transform(uint8_t id, float *view, float *proj_l, float *proj_r);
 
-TFX_API tfx_program tfx_program_new(const char *vss, const char *fss, const char *attribs[]);
-TFX_API tfx_program tfx_program_gs_new(const char *gss, const char *vss, const char *fss, const char *attribs[]);
+// you may pass -1 for attrib_count to use a null-terminated list for attribs
+TFX_API tfx_program tfx_program_new(const char *vss, const char *fss, const char *attribs[], const int attrib_count);
+// you may pass -1 for attrib_count to use a null-terminated list for attribs
+TFX_API tfx_program tfx_program_len_new(const char *vss, const int _vs_len, const char *fss, const int _fs_len, const char *attribs[], const int attrib_count);
+// you may pass -1 for attrib_count to use a null-terminated list for attribs
+TFX_API tfx_program tfx_program_gs_len_new(const char *_gss, const int _gs_len, const char *_vss, const int _vs_len, const char *_fss, const int _fs_len, const char *attribs[], const int attrib_count);
+// you may pass -1 for attrib_count to use a null-terminated list for attribs
+TFX_API tfx_program tfx_program_gs_new(const char *gss, const char *vss, const char *fss, const char *attribs[], const int attrib_count);
+TFX_API tfx_program tfx_program_cs_len_new(const char *css, const int _cs_len);
 TFX_API tfx_program tfx_program_cs_new(const char *css);
+// TODO: add tfx_program_free(tfx_program). they are currently cleaned up with tfx_shutdown.
 
 TFX_API tfx_uniform tfx_uniform_new(const char *name, tfx_uniform_type type, int count);
 
