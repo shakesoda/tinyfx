@@ -155,9 +155,11 @@ int main(int argc, char **argv) {
 
 	double then = (double)SDL_GetPerformanceCounter() / (double)SDL_GetPerformanceFrequency();
 	double last_report = then;
+	(void)last_report; // ignore warning
 	while (g_alive) {
 		double now = (double)SDL_GetPerformanceCounter() / (double)SDL_GetPerformanceFrequency();
 		double delta = now - then;
+		(void)delta;
 		then = now;
 
 #if 0

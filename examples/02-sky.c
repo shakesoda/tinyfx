@@ -24,7 +24,7 @@ void sky_init(uint16_t w, uint16_t h) {
 	const char *src = demo_read_file("examples/02-sky.glsl");
 	const char *attribs[] = { "a_position", NULL };
 
-	sky_res.prog = tfx_program_new(src, src, attribs);
+	sky_res.prog = tfx_program_new(src, src, attribs, -1);
 
 	sky_res.world_from_screen = tfx_uniform_new("u_world_from_screen", TFX_UNIFORM_MAT4, 1);
 	sky_res.sun_params = tfx_uniform_new("u_sun_params", TFX_UNIFORM_VEC4, 1);

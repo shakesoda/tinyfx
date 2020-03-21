@@ -35,7 +35,7 @@ void triangle_init(uint16_t w, uint16_t h) {
 		NULL
 	};
 
-	tri_res.prog = tfx_program_new(vss, fss, attribs);
+	tri_res.prog = tfx_program_new(vss, fss, attribs, -1);
 
 	float verts[] = {
 		 0.0f,  0.5f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f,
