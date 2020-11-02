@@ -2,65 +2,6 @@
 #include "demo_util.h"
 #include <math.h>
 
-/*
-local function grid(width, height, subdivisions)
-	local tiles = math.max(0, math.floor(subdivisions or 0)) + 1
-	local verts = {}
-	local function vertex(x, y)
-		local x_pct = x / tiles
-		local y_pct = y / tiles
-		return {
-			x_pct * width, y_pct * height, 0,
-			0, 1, 0,
-			x_pct, y_pct
-		}
-	end
-	for y=1,tiles do
-		for x=1,tiles do
-			local a = vertex(x-1, y-1)
-			local b = vertex(x-1, y)
-			local c = vertex(x, y-1)
-			local d = vertex(x, y)
-			table.insert(verts, a)
-			table.insert(verts, b)
-			table.insert(verts, c)
-			table.insert(verts, b)
-			table.insert(verts, d)
-			table.insert(verts, c)
-		end
-	end
-	local fmt = {
-		{ 'lovrPosition', 'float', 3 },
-		{ 'lovrNormal',   'float', 3 },
-		{ 'lovrTexCoord', 'float', 2 }
-	}
-	-- lovr is broken
-	local indices = {}
-	for i, _ in ipairs(verts) do
-		table.insert(indices, i)
-	end
-	local m = lovr.graphics.newMesh(fmt, verts, "triangles", "static", false)
-	m:setVertexMap(indices)
-	return m
-end
-
-local ground = grid(1, 1, canvas:getWidth()/6)
-
-
-// this function is broken in lovr 0.14.0
-local function lookAt(eye, at, up)
-	local z_axis=vec3(eye-at):normalize()
-	local x_axis=vec3(up):cross(z_axis):normalize()
-	local y_axis=vec3(z_axis):cross(x_axis)
-	return lovr.math.newMat4(
-		x_axis.x,y_axis.x,z_axis.x,0,
-		x_axis.y,y_axis.y,z_axis.y,0,
-		x_axis.z,y_axis.z,z_axis.z,0,
-		-x_axis:dot(eye),-y_axis:dot(eye),-z_axis:dot(eye),1
-	)
-end
-
-*/
 struct {
 	tfx_program prog;
 	tfx_program sky;
