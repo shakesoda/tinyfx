@@ -160,14 +160,6 @@ vec3 sun(vec3 i_ws, vec3 sun_ws) {
 	return sun_color * halo + sun_color * smoothstep(sun_size, 1.0, sun_angle);
 }
 
-vec3 xsun(vec3 i_ws, vec3 sun_ws) {
-	vec3 sun_color = vec3(10.0);
-	float sun_angle = dot(sun_ws, i_ws);
-	vec3 halo = normalize(vec3(6.0, 7.0, 8.0));
-	float halo_a = 1.25 * pow(sun_angle * 0.5 + 0.5, 1.0) * 0.125;
-	return sun_color * halo * (1.0/length(sun_color)) * halo_a;
-}
-
 vec3 sky_approx(vec3 i_ws, vec3 sun_ws) {
 	vec3 final = extra_cheap_atmosphere(i_ws, sun_ws);
 	final += sun(i_ws, sun_ws);
@@ -209,7 +201,7 @@ void main() {
 	vec3 n_ws = normal(local_uv, 0.001, 1.2).xzy;
 	vec3 n_vs = normalize(view_from_world*n_ws);
 	vec3 i_vs = normalize(view_dir_vs);
-	vec3 i_ws = inverse(view_from_world)*-i_vs;
+	vec3 i_ws = transpose(view_from_world)*-i_vs;
 	float ldh = sqrt(max(0.05, dot(n_vs, i_vs)));
 	float ndi = schlick_ior_fresnel(1.53, ldh);
 	vec3 l_ws = normalize(sun_direction);
