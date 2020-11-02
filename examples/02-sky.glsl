@@ -16,6 +16,8 @@ precision highp float;
 
 in vec3 f_position;
 
+out vec4 out_color;
+
 uniform vec4 u_sun_params;
 const bool u_tonemap = true;
 
@@ -173,7 +175,7 @@ void main() {
 	vec3 white = tonemap_aces(vec3(1000.0));
 	final *= exp2(cameraWhiteAndExposure.a);
 	final = tonemap_aces(final/white_point)*white;
-	gl_FragColor = to_gamma(vec4(final, 1.0));
+	out_color = to_gamma(vec4(final, 1.0));
 }
 
 #endif

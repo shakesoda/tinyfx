@@ -6,6 +6,7 @@
 #include "demo_util.h"
 #include "01-triangle.c"
 #include "02-sky.c"
+#include "08-water.c"
 
 struct demo_def {
 	void (*init)(uint16_t, uint16_t);
@@ -13,10 +14,11 @@ struct demo_def {
 	void (*cleanup)();
 };
 
-static const int num_demos = 2;
+static const int num_demos = 3;
 static struct demo_def g_demos[] = {
 	{ &triangle_init, &triangle_frame, &triangle_deinit },
 	{ &sky_init, &sky_frame, &sky_deinit },
+	{ &water_init, &water_frame, &water_deinit }
 };
 
 static int g_current_demo = 0;
@@ -102,19 +104,18 @@ int main(int argc, char **argv) {
 	g_window = SDL_CreateWindow(
 		"",
 		SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-		640, 480,
+		960, 540,
 		SDL_WINDOW_OPENGL
 	);
-	SDL_GL_SetAttribute(SDL_GL_RED_SIZE,    5);
-	SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE,  6);
-	SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE,   5);
+	SDL_GL_SetAttribute(SDL_GL_RED_SIZE,    8);
+	SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE,  8);
+	SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE,   8);
 	SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE,  0);
 	SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 16);
 
-	// So that desktops behave consistently with RPi
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
 
 	g_context = SDL_GL_CreateContext(g_window);
@@ -140,7 +141,7 @@ int main(int argc, char **argv) {
 
 	tfx_platform_data pd;
 	pd.use_gles = true;
-	pd.context_version = 20;
+	pd.context_version = 31;
 	pd.gl_get_proc_address = SDL_GL_GetProcAddress;
 	tfx_set_platform_data(pd);
 	tfx_reset_flags flags = TFX_RESET_NONE

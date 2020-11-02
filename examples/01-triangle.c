@@ -25,8 +25,9 @@ void triangle_init(uint16_t w, uint16_t h) {
 	const char *fss = ""
 		"precision mediump float;\n"
 		"in vec4 v_col;\n"
+		"out vec4 out_color;\n"
 		"void main() {\n"
-		"	gl_FragColor = v_col;\n"
+		"	out_color = v_col;\n"
 		"}\n"
 	;
 	const char *attribs[] = {
