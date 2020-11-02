@@ -104,7 +104,7 @@ int main(int argc, char **argv) {
 	g_window = SDL_CreateWindow(
 		"",
 		SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-		960, 540,
+		640, 480,
 		SDL_WINDOW_OPENGL
 	);
 	SDL_GL_SetAttribute(SDL_GL_RED_SIZE,    8);

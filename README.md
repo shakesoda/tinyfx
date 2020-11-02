@@ -35,6 +35,10 @@ Sky + Camera (`examples/02-sky.c`)
 
 ![](https://github.com/shakesoda/tinyfx/raw/master/examples/02-sky.png)
 
+Water
+
+![](https://github.com/shakesoda/tinyfx/raw/master/examples/08-water.png)
+
 <!-- Hello C++ (`examples/hello_cpp.cpp) -->
 <!-- Transient buffers -->
 <!-- Compute -->
