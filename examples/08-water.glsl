@@ -41,32 +41,31 @@ vec2 wavedx(vec2 position, vec2 direction, float speed, float frequency, float t
 float getwaves(vec2 position) {
 	const float drag_mult = 0.048;
 	const int iterations = 40;
-	float iter = 0.0;
-	float phase = 6.0;
-	float speed = 2.0;
-	float weight = 1.0;
-	float w = 0.0;
-	float ws = 0.0;
+	// iter, w, ws state
+	vec3 accum = vec3(0.0, 0.0, 0.0);
+	// phase, speed, weight
+	vec3 psw = vec3(6.0, 2.0, 1.0);
 	for (int i=0; i < iterations; i++) {
-		vec2 p = vec2(sin(iter), cos(iter));
-		vec2 res = wavedx(position, p, speed, phase, time);
-		position += normalize(p) * res.y * weight * drag_mult;
-		w += res.x * weight;
-		iter += 12.0;
-		ws += weight;
-		weight = mix(weight, 0.0, 0.2);
-		phase *= 1.18;
-		speed *= 1.07;
+		// note: vec2(sin(), cos()) will always be normalized
+		vec2 p = vec2(sin(accum.x), cos(accum.x));
+		vec2 res = wavedx(position, p, psw.y, psw.x, time);
+		position += p * res.y * psw.z * drag_mult;
+		accum += vec3(12.0, res.x * psw.z, psw.z);
+		psw *= vec3(1.18, 1.07, 0.8);
 	}
-	return w / ws;
+	return accum.y / accum.z;
 }
 
 vec3 normal(vec2 pos, float e, float depth) {
-	vec2 ex = vec2(e, 0.0);
+	vec2 ex = vec2(e * 0.1, 0.0);
 	float H = getwaves(pos.xy * 0.1) * depth;
 	vec3 a = vec3(pos.x, H, pos.y);
-	return normalize(cross(normalize(a-vec3(pos.x - e, getwaves(pos.xy * 0.1 - ex.xy * 0.1) * depth, pos.y)), 
-		normalize(a-vec3(pos.x, getwaves(pos.xy * 0.1 + ex.yx * 0.1) * depth, pos.y + e))));
+	return normalize(
+		cross(
+			(a-vec3(pos.x - e, getwaves(pos.xy * 0.1 - ex.xy) * depth, pos.y)),
+			(a-vec3(pos.x, getwaves(pos.xy * 0.1 + ex.yx) * depth, pos.y + e))
+		)
+	);
 }
 
 #ifdef VERTEX
@@ -113,12 +112,16 @@ void main() {
 	mat3 rot = mat3(u_view_from_world);
 	ray.pos = -u_view_from_world[3].xyz * rot;
 	ray.dir = normalize(vec3(screen_uv, u_screen_from_view[0].x) * rot);
-	
+
 	RayPlane plane;
 	plane.pos = (u_world_from_local * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
 	plane.dir = vec3(0.0, 0.0, 1.0);
 
 	vec4 vertex = ray_plane(ray, plane);
+	if (vertex.w < 0.0) {
+		gl_Position = vertex;
+		return;
+	}
 	vertex.z = deform(vertex.xy);
 
 	view_dir_vs = -(u_view_from_world * vertex).xyz;
@@ -127,49 +130,52 @@ void main() {
 	view_from_world = mat3(u_view_from_world);
 
 	float near = (2.0 * u_screen_from_view[3][2]) / (2.0 * u_screen_from_view[2][2] - 2.0);
-	float far = ((u_screen_from_view[2][2] - 1.0) * near) / (u_screen_from_view[2][2] + 1.0);
-	far_clip = far * 0.95;
+	far_clip = ((u_screen_from_view[2][2] - 1.0) * near) / (u_screen_from_view[2][2] + 1.0);
 
 	gl_Position = u_screen_from_view * u_view_from_world * vertex;
 }
 #endif
 
 #ifdef PIXEL
-vec3 extra_cheap_atmosphere(vec3 i_ws, vec3 sun_ws) {
+float square(float v) { return v*v; }
+float cube(float v) { return v*v*v; }
+
+vec3 extra_cheap_atmosphere(vec3 i_ws, vec3 sun_ws, float sdi) {
 	sun_ws.z = max(sun_ws.z, -0.07);
 	float special_trick = 1.0 / (i_ws.z * 1.0 + 0.125);
 	float special_trick2 = 1.0 / (sun_ws.z * 11.0 + 1.0);
-	float raysundt = pow(abs(dot(sun_ws, i_ws)), 2.0);
-	float sundt = pow(max(0.0, dot(sun_ws, i_ws)), 8.0);
+	float raysundt = square(abs(sdi));
+	float sundt = pow(max(0.0, sdi), 8.0);
 	float mymie = sundt * special_trick * 0.025;
 	vec3 suncolor = mix(vec3(1.0), max(vec3(0.0), vec3(1.0) - vec3(5.5, 13.0, 22.4) / 22.4), special_trick2);
 	vec3 bluesky= vec3(5.5, 13.0, 22.4) / 22.4 * suncolor;
 	vec3 bluesky2 = max(vec3(0.0), bluesky - vec3(5.5, 13.0, 22.4) * 0.002 * (special_trick + -6.0 * sun_ws.z * sun_ws.z));
 	bluesky2 *= special_trick * (0.4 + raysundt * 0.4);
-	return max(vec3(0.0), bluesky2 * (1.0 + 1.0 * pow(1.0 - i_ws.z, 3.0)) + mymie * suncolor);
+	return max(vec3(0.0), bluesky2 * (1.0 + 1.0 * cube(1.0 - i_ws.z)) + mymie * suncolor);
 }
 
-vec3 sun(vec3 i_ws, vec3 sun_ws) {
+vec3 sun(vec3 i_ws, vec3 sun_ws, float sdi) {
 	vec3 sun_color = vec3(1000.0);
-	float sun_angle = dot(sun_ws, i_ws);
-	vec3 halo = normalize(vec3(6.0, 7.0, 8.0));
-	float halo_a = pow(sun_angle * 0.5 + 0.5, 1.0) * 0.125;
+	float sun_angle = sdi;
+	// normalize(vec3(6.0, 7.0, 8.0));
+	vec3 halo = vec3(0.49153915231142, 0.57346234436333, 0.65538553641523);
+	float halo_a = (sun_angle * 0.5 + 0.5, 1.0) * 0.125;
 	float sun_size = 0.9999;
 	float halo_b = (1.0-pow(smoothstep(sun_size, sun_size - 0.5, sun_angle), 0.025)) * 5.0;
-	halo *= 1.25 * (1.0/length(sun_color)) * (halo_a + halo_b);
+	halo *= (0.00125 /*1.25 * 1.0/length(sun_color)*/) * (halo_a + halo_b);
 	return sun_color * halo + sun_color * smoothstep(sun_size, 1.0, sun_angle);
 }
 
 vec3 sky_approx(vec3 i_ws, vec3 sun_ws) {
-	vec3 final = extra_cheap_atmosphere(i_ws, sun_ws);
-	final += sun(i_ws, sun_ws);
-	vec3 up = vec3(0.0, 0.0, 1.0);
+	float sdi = dot(sun_ws, i_ws);
+	vec3 final = extra_cheap_atmosphere(i_ws, sun_ws, sdi);
+	final += sun(i_ws, sun_ws, sdi);
 	final = mix( // earth shadow
 		final,
-		vec3(3.0 * dot(sun_ws, up)) * vec3(0.3, 0.6, 1.0),
-		smoothstep(0.25, -0.1, dot(i_ws, up))
+		vec3(3.0 * sun_ws.z) * vec3(0.3, 0.6, 1.0),
+		smoothstep(0.25, -0.1, i_ws.z)
 	);
-	return final * exp2(1.75);
+	return final * 3.3635856610149; //exp2(1.75);
 }
 
 float schlick_ior_fresnel(float ior, float ldh) {
@@ -189,6 +195,12 @@ vec3 tonemap_aces(vec3 x) {
 	return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
 }
 
+#ifdef GL_ES
+vec4 linear_to_gamma(vec4 c) {
+	c.rgb = pow(c.rgb, vec3(2.2));
+	return c;
+}
+#else
 vec4 linear_to_gamma(vec4 c) {
 	bvec3 leq = lessThanEqual(c.rgb, vec3(0.04045));
 	c.r = leq.r ? c.r / 12.92 : pow((c.r + 0.055) / 1.055, 2.4);
@@ -196,12 +208,13 @@ vec4 linear_to_gamma(vec4 c) {
 	c.b = leq.b ? c.b / 12.92 : pow((c.b + 0.055) / 1.055, 2.4);
 	return c;
 }
+#endif
 
 void main() {
 	vec3 n_ws = normal(local_uv, 0.001, 1.2).xzy;
-	vec3 n_vs = normalize(view_from_world*n_ws);
+	vec3 n_vs = (view_from_world*n_ws);
 	vec3 i_vs = normalize(view_dir_vs);
-	vec3 i_ws = transpose(view_from_world)*-i_vs;
+	vec3 i_ws = normalize(view_dir_ws);
 	float ldh = sqrt(max(0.05, dot(n_vs, i_vs)));
 	float ndi = schlick_ior_fresnel(1.53, ldh);
 	vec3 l_ws = normalize(sun_direction);
@@ -209,9 +222,11 @@ void main() {
 	float fog = sqrt(min(1.0, length(view_dir_vs) / far_clip));
 	final = mix(final, sky_approx(i_ws, -l_ws), fog);
 	vec3 screen = final;
-	screen.rgb *= exp2(-1.75);
-	screen.rgb /= normalize(vec3(5.0, 5.5, 5.25));
-	screen.rgb = tonemap_aces(screen.rgb) / tonemap_aces(vec3(1000.0));
+	//screen.rgb *= exp2(-1.75);
+	screen.rgb *= 0.29730177875068;
+	// normalize(vec3(5.0, 5.5, 5.25));
+	screen.rgb /= vec3(0.54944225579476, 0.60438648137423, 0.5769143685845);
+	screen.rgb = tonemap_aces(screen.rgb);// / tonemap_aces(vec3(1000.0));
 	out_color = linear_to_gamma(vec4(screen, 1.0));
 }
 #endif

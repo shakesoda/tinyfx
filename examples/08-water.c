@@ -65,7 +65,7 @@ void water_init(uint16_t w, uint16_t h) {
 	tfx_vertex_format_add(&fmt, 0, 3, false, TFX_TYPE_FLOAT);
 	tfx_vertex_format_end(&fmt);
 
-	float div = 6.0f;
+	float div = 8.0f;
 	float tiles = fmaxf(0.0f, floorf((float)w / div)) + 1.0f;
 	water_res.grid_vertices = tiles * tiles * 6;
 	struct vert *verts = malloc(fmt.stride * water_res.grid_vertices);
