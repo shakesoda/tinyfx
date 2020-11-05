@@ -3164,7 +3164,7 @@ tfx_stats tfx_frame() {
 			// spin the buffer id before updating
 			tex->gl_idx = (tex->gl_idx + 1) % tex->gl_count;
 			tfx_glBindTexture(GL_TEXTURE_2D, tex->gl_ids[tex->gl_idx]);
-			if (tfx_glInvalidateTexSubImage) {
+			if (tfx_glInvalidateTexSubImage && !g_platform_data.use_gles) {
 				tfx_glInvalidateTexSubImage(tex->gl_ids[tex->gl_idx], 0, 0, 0, 0, tex->width, tex->height, 1);
 			}
 			tfx_glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, tex->width, tex->height, internal->format, internal->type, internal->update_data);
@@ -3694,8 +3694,8 @@ tfx_stats tfx_frame() {
 				default: break; // unspecified = triangles.
 			}
 
-
-			if (CHANGED(flags_diff, TFX_STATE_WIREFRAME)) {
+			// not available on gles
+			if (CHANGED(flags_diff, TFX_STATE_WIREFRAME) && !g_platform_data.use_gles) {
 				if (draw.flags & TFX_STATE_WIREFRAME) {
 					CHECK(tfx_glPolygonMode(GL_FRONT_AND_BACK, GL_LINE));
 				}
